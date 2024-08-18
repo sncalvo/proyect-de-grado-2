@@ -1,0 +1,9 @@
+{
+    "cmake.configureOnOpen": true,
+    "files.associations": {
+        "xstring": "cpp",
+        "variant": "cpp",
+        "cstdlib": "cpp",
+        "cmath": "cpp"
+    }
+}

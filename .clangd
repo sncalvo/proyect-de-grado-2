@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [--std=c++17, -I/usr/include/c++/11, -I/usr/include/x86_64-linux-gnu/c++/11, -stdlib=libc++, -I/home/sncalvo/sdks/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64/include, -I/home/sncalvo/Documents/proyecto-de-grado/common/gdt, -I/home/sncalvo/Documents/proyecto-de-grado/common, -I/home/sncalvo/sdks/embree/include]

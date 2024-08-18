@@ -1,0 +1,23 @@
+models:
+  - objPath: "../../models/plane_4.obj"
+    origin: [0, 0, 0]
+    rotation: [0, 0, 0]
+    roughness: 1e-6
+  - objPath: "../../models/plane_3.obj"
+    origin: [0, 0, 0]
+    rotation: [0, 0, 0]
+    roughness: 0.0001
+  - objPath: "../../models/plane_2.obj"
+    origin: [0, 0, 0]
+    rotation: [0, 0, 0]
+    roughness: 0.01
+  - objPath: "../../models/plane_1.obj"
+    origin: [0, 0, 0]
+    rotation: [0, 0, 0]
+    roughness: 0.025
+lights:
+  # - objPath: "../../models/light_1.obj"
+  - objPath: "../../models/sphere.obj"
+    origin: [15.57, -1.5, 20.0]
+    power: [1.0, 1.0, 1.0]
+    normal: [0.0, 1.0, 1.0]

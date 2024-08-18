@@ -1,0 +1,12 @@
+*~
+.#*
+*#
+bin
+build
+*.autosave
+*.gz
+*.zip
+Session.vim
+*.swp
+vcpkg_installed/
+build/

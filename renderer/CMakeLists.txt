@@ -18,6 +18,7 @@ add_executable(mcrenderer
   common.h
   Window.h
   Camera.h
+  image.h
   glfWindow/GLFWindow.h
   glfWindow/GLFWindow.cpp
 )

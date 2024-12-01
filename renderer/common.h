@@ -44,6 +44,7 @@ inline __hostdev__ void mortonEncode(uint32_t& code, uint32_t x, uint32_t y)
     code = SeparateBy1(x) | (SeparateBy1(y) << 1);
 }
 
+/*
 template<typename RenderFn, typename GridT>
 inline float renderImage(bool useCuda, const RenderFn renderOp, int width, int height, float* image, const GridT* grid)
 {
@@ -59,92 +60,21 @@ inline float renderImage(bool useCuda, const RenderFn renderOp, int width, int h
     auto t1 = ClockT::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.f;
     return duration;
+}*/
+
+using Vec3T = nanovdb::Vec3<float>;
+
+inline __hostdev__ void writeBuffer(float* outImage, int i, int w, int h, float value, float alpha, Vec3T& color)
+{
+    int offset;
+    offset = i * 3;
+
+    const float bgr = 0.f;
+    const float bgg = 0.f;
+    const float bgb = 0.f;
+    outImage[offset] = color[0] * (1.f - alpha) + alpha * value + (1.0f - alpha) * bgr;
+    outImage[offset + 1] = color[1] * (1.f - alpha) + alpha * value + (1.0f - alpha) * bgg;
+    outImage[offset + 2] = color[2] * (1.f - alpha) + alpha * value + (1.0f - alpha) * bgb;
 }
-
-inline void saveImage(const std::string& filename, int width, int height, const float* image)
-{
-    const auto isLittleEndian = []() -> bool {
-        static int  x = 1;
-        static bool result = reinterpret_cast<uint8_t*>(&x)[0] == 1;
-        return result;
-    };
-
-    float scale = 1.0f;
-    if (isLittleEndian())
-        scale = -scale;
-
-    std::fstream fs(filename, std::ios::out | std::ios::binary);
-    if (!fs.is_open()) {
-        throw std::runtime_error("Unable to open file: " + filename);
-    }
-
-    fs << "Pf\n"
-       << width << "\n"
-       << height << "\n"
-       << scale << "\n";
-
-    for (int i = 0; i < width * height; ++i) {
-        float r = image[i];
-        fs.write((char*)&r, sizeof(float));
-    }
-}
-
-template<typename Vec3T>
-struct RayGenOp
-{
-    float mWBBoxDimZ;
-    Vec3T mWBBoxCenter;
-
-    inline RayGenOp(float wBBoxDimZ, Vec3T wBBoxCenter)
-        : mWBBoxDimZ(wBBoxDimZ)
-        , mWBBoxCenter(wBBoxCenter)
-    {
-    }
-
-    inline __hostdev__ void operator()(int i, int w, int h, Vec3T& outOrigin, Vec3T& outDir) const
-    {
-        // perspective camera along Z-axis...
-        uint32_t x, y;
-#if 0
-        mortonDecode(i, x, y);
-#else
-        x = i % w;
-        y = i / w;
-#endif
-        const float fov = 45.f;
-        const float u = (float(x) + 0.5f) / w;
-        const float v = (float(y) + 0.5f) / h;
-        const float aspect = w / float(h);
-        const float Px = (2.f * u - 1.f) * tanf(fov / 2 * 3.14159265358979323846f / 180.f) * aspect;
-        const float Py = (2.f * v - 1.f) * tanf(fov / 2 * 3.14159265358979323846f / 180.f);
-        const Vec3T origin = mWBBoxCenter + Vec3T(0, 0, mWBBoxDimZ);
-        Vec3T       dir(Px, Py, -1.f);
-        dir.normalize();
-        outOrigin = origin;
-        outDir = dir;
-    }
-};
-
-struct CompositeOp
-{
-    inline __hostdev__ void operator()(float* outImage, int i, int w, int h, float value, float alpha) const
-    {
-        uint32_t x, y;
-        int      offset;
-#if 0
-        mortonDecode(i, x, y);
-        offset = x + y * w;
-#else
-        x = i % w;
-        y = i / w;
-        offset = i;
-#endif
-
-        // checkerboard background...
-        const int   mask = 1 << 7;
-        const float bg = ((x & mask) ^ (y & mask)) ? 1.0f : 0.5f;
-        outImage[offset] = alpha * value + (1.0f - alpha) * 0.f;
-    }
-};
 
 #endif // COMMON_NANOVDB_H

@@ -6,14 +6,12 @@
 
 #pragma once
 
-#if defined(NANOVDB_USE_CUDA)
 #include <cuda_runtime_api.h>
-#endif
 
 #include <utility>
 #include <tuple>
 
-#include "ComputePrimitives.h"
+#include <curand_kernel.h>
 
 // forward compatibility for C++14 Standard Library
 namespace cxx14 {
@@ -89,13 +87,13 @@ private:
 };
 
 template<int WorkPerThread, typename FnT, typename... Args>
-__global__ void parallelForKernel(int numItems, FnT f, Args... args)
+__global__ void parallelForKernel(curandState* state, int numItems, FnT f, Args... args)
 {
     for (int j=0;j<WorkPerThread;++j)
     {
         int i = threadIdx.x + blockIdx.x * blockDim.x + j * blockDim.x * gridDim.x;
         if (i < numItems)
-            f(i, i + 1, args...);
+            f(i, i + 1, state, args...);
     }
 }
 
@@ -114,6 +112,12 @@ inline void computeFill(bool useCuda, void* data, uint8_t value, size_t size)
     }
 }
 
+__global__ void setup_kernel(curandState* state)
+{
+    auto id = threadIdx.x + blockIdx.x * blockDim.x;
+    curand_init(123456, id, 0, &state[id]);
+}
+
 template<typename FunctorT, typename... Args>
 inline void computeForEach(bool useCuda, int numItems, int blockSize, const char* file, int line, const FunctorT& op, Args... args)
 {
@@ -121,9 +125,14 @@ inline void computeForEach(bool useCuda, int numItems, int blockSize, const char
         return;
 
     if (useCuda) {
+        // Setup
+        curandState* dStates;
+        cudaMalloc((void**)&dStates, sizeof(curandState) * 1024);
+
         static const int WorkPerThread = 1;
         int blockCount = ((numItems/WorkPerThread) + (blockSize - 1)) / blockSize;
-        parallelForKernel<WorkPerThread, FunctorT, Args...><<<blockCount, blockSize, 0, 0>>>(numItems, op, args...);
+        setup_kernel << <blockCount, blockSize, 0, 0 >> > (dStates);
+        parallelForKernel<WorkPerThread, FunctorT, Args...><<<blockCount, blockSize, 0, 0>>>(dStates, numItems, op, args...);
         NANOVDB_CUDA_CHECK_ERROR(cudaGetLastError(), __FILE__, __LINE__);
     }
 }

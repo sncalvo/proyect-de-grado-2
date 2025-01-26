@@ -126,13 +126,15 @@ inline void computeForEach(bool useCuda, int numItems, int blockSize, const char
 
     if (useCuda) {
         // Setup
-        curandState* dStates;
-        cudaMalloc((void**)&dStates, sizeof(curandState) * 1024);
-
         static const int WorkPerThread = 1;
-        int blockCount = ((numItems/WorkPerThread) + (blockSize - 1)) / blockSize;
-        setup_kernel << <blockCount, blockSize, 0, 0 >> > (dStates);
-        parallelForKernel<WorkPerThread, FunctorT, Args...><<<blockCount, blockSize, 0, 0>>>(dStates, numItems, op, args...);
+        int blockCount = ((numItems / WorkPerThread) + (blockSize - 1)) / blockSize;
+
+        curandState* dStates;
+        cudaMalloc(&dStates, sizeof(curandState) * blockCount * blockSize);
+
+        setup_kernel << <blockCount, blockSize>> > (dStates);
+        NANOVDB_CUDA_CHECK_ERROR(cudaGetLastError(), __FILE__, __LINE__);
+        parallelForKernel<WorkPerThread, FunctorT, Args...><<<blockCount, blockSize>>>(dStates, numItems, op, args...);
         NANOVDB_CUDA_CHECK_ERROR(cudaGetLastError(), __FILE__, __LINE__);
     }
 }

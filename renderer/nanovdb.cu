@@ -11,10 +11,10 @@
 #include <nanovdb/util/Ray.h>
 #include <nanovdb/util/HDDA.h>
 
-#include "common.h"
+#include "common.cuh"
 #include "image.h"
-#include "integrator.h"
-#include "ray.h"
+#include "integrator.cuh"
+#include "ray.cuh"
 
 using BufferT = nanovdb::CudaDeviceBuffer;
 

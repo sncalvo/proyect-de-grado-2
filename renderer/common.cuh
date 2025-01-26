@@ -11,7 +11,7 @@
 #include <fstream>
 #include <nanovdb/NanoVDB.h>
 
-#include "ComputePrimitives.h"
+#include "ComputePrimitives.cuh"
 
 inline __hostdev__ uint32_t CompactBy1(uint32_t x)
 {

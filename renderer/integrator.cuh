@@ -20,16 +20,18 @@ using GridT = nanovdb::FloatGrid;
 using CoordT = nanovdb::Coord;
 using RealT = float;
 using Vec3T = nanovdb::Vec3<RealT>;
+using Vec4T = nanovdb::Vec4<RealT>;
 using RayT = nanovdb::Ray<RealT>;
 using ClockT = std::chrono::high_resolution_clock;
 
 constexpr unsigned int DEPTH_LIMIT = 100;
-constexpr float SIGMA_A = 0.02f;
-constexpr float SIGMA_S = 0.2f;
+constexpr float SIGMA_A = 0.05f;
+constexpr float SIGMA_S = 0.95f;
 constexpr float MIN_STEP = 0.5f;
-constexpr float MAX_STEP = 2.f;
+constexpr float MAX_STEP = 5.f;
 constexpr float PI = 3.14159265358979323846f;
-constexpr float DENSITY = 0.1f;
+constexpr float DENSITY = 1.f;
+constexpr unsigned int PIXEL_SAMPLES = 16;
 
 Vec3T UP = Vec3T {0.0f, 1.0f, 0.0f};
 
@@ -123,8 +125,7 @@ float __device__ clamp(float min, float max, float value) {
     return value;
 }
 
-void __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc);
-void __device__ DirectLightIntegration(curandState* dStates, int width, int height, int start, int end, float* image, const World world);
+Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc);
 
 void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const World world) {
     auto acc = world.grid->tree().getAccessor();
@@ -135,25 +136,34 @@ void __device__ runRender(curandState* dStates, int width, int height, int start
 
     float sigmaMAJ = world.maxSigma * (SIGMA_A + SIGMA_S);
 
+
     for (int i = start; i < end; ++i) {
-        DeltaTrackingIntegration(i, world, rayEye, image, width, height, localState, sigmaMAJ, acc);
+        Vec4T totalColor;
+        for (int j = 0; j < PIXEL_SAMPLES; ++j) {
+            Vec4T color = DeltaTrackingIntegration(i, world, rayEye, image, width, height, localState, sigmaMAJ, acc);
+            totalColor += color;
+        }
+        totalColor /= PIXEL_SAMPLES;
+        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(totalColor[0], totalColor[1], totalColor[2]));
     }
 }
 
-void __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc) {
+Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc) {
     Vec3T rayDir = world.camera.direction(i);
 
     RayT wRay(rayEye, rayDir);
     RayT iRay = wRay.worldToIndexF(*world.grid);
 
+    auto backgroundColor = Vec3T(0.36f, 0.702f, 0.98f);
+
     if (!iRay.clip(world.box)) {
-        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(0.1f, 0.1f, 0.1f));
-        return;
+        auto color = Vec4T(backgroundColor[0], backgroundColor[1], backgroundColor[2], 0.0f);
+        return color;
     }
 
     float transmittance = 1.0f;
     bool absorbed = false;
-    Vec3T color{ 0.1f,0.1f,0.1f };
+    Vec3T color{ 0.f,0.f,0.f };
     auto far = iRay.t0();
 
     for (unsigned int depth = 0; !absorbed && depth < DEPTH_LIMIT; ++depth) {
@@ -209,7 +219,7 @@ void __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEy
             absorbed = true;
         }
         else {
-            float g = 0.5f;
+            float g = 0.2f;
             if (world.grid->tree().isActive(coord)) {
                 g = acc.getValue(coord);
             }
@@ -222,17 +232,18 @@ void __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEy
             iRay = nanovdb::Ray<float>(iRayOrigin, rayDir);
 
             if (!iRay.clip(world.box)) {
+                absorbed = true;
                 break;
             }
             far = iRay.t0();
         }
     }
-    writeBuffer(image, i, width, height, 0.f, clamp(.0f, 1.f, 1.0f - transmittance), color);
 
-}
+    if (!absorbed) {
+        color += backgroundColor;
+    }
 
-void __device__ DirectLightIntegration(curandState* dStates, int width, int height, int start, int end, float* image, const World world) {
-
+    return Vec4T(color[0], color[1], color[2], 1.f - transmittance);
 }
 
 #endif

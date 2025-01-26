@@ -73,12 +73,12 @@ int main(int ac, char** av)
             throw std::runtime_error("Grid must be a fog volume");
         }
 
-        const int width = 1024;
-        const int height = 1024;
+        const int width = 1080;
+        const int height = 1080;
         // BufferT   imageBuffer;
         // imageBuffer.init(width * height * 3 * sizeof(float));
 
-        Image image(1024, 1024);
+        Image image(width, height);
 
         runNanoVDB(handle, image);
 

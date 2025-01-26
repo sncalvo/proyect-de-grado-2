@@ -123,8 +123,11 @@ float __device__ clamp(float min, float max, float value) {
     return value;
 }
 
+void __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc);
+void __device__ DirectLightIntegration(curandState* dStates, int width, int height, int start, int end, float* image, const World world);
+
 void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const World world) {
-    auto acc = world.grid->tree().getAccessor();`
+    auto acc = world.grid->tree().getAccessor();
     auto id = threadIdx.x + blockIdx.x * blockDim.x;
 
     curandState* localState = &dStates[id];
@@ -133,94 +136,103 @@ void __device__ runRender(curandState* dStates, int width, int height, int start
     float sigmaMAJ = world.maxSigma * (SIGMA_A + SIGMA_S);
 
     for (int i = start; i < end; ++i) {
-        Vec3T rayDir = world.camera.direction(i);
-
-        RayT wRay(rayEye, rayDir);
-        RayT iRay = wRay.worldToIndexF(*world.grid);
-
-        if (!iRay.clip(world.box)) {
-            writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(0.1f, 0.1f, 0.1f));
-            return;
-        }
-
-        float transmittance = 1.0f;
-        bool absorbed = false;
-        Vec3T color{ 0.1f,0.1f,0.1f };
-        auto far = iRay.t0();
-
-        for (unsigned int depth = 0; !absorbed && depth < DEPTH_LIMIT; ++depth) {
-            auto coord = CoordT::Floor(iRay(far));
-
-            if (false && !world.box.isInside(coord)) {
-                break;
-            }
-
-            float sigma = 0.0f;
-            if (world.grid->tree().isActive(coord)) {
-              sigma = acc.getValue(coord) * DENSITY;
-            }
-
-            auto muA = sigma * SIGMA_A;
-            auto muS = sigma * SIGMA_S;
-            auto muT = muA + muS;
-
-            float pathLength;
-            if (sigma > 0.f) {
-                pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
-
-                pathLength *= 0.1f;
-                pathLength = clamp(MIN_STEP, MAX_STEP, pathLength);
-            }
-            else {
-                pathLength = MIN_STEP * 10.f;
-            }
-
-            far += pathLength;
-            auto t1 = iRay.t1();
-            if (far > t1)
-                break;
-
-            if (sigma <= 0.f) {
-                continue;
-            }
-
-            auto absorbtion = muA / sigmaMAJ;
-            auto scattering = muS / sigmaMAJ;
-            auto nullPoint = 1.f - absorbtion - scattering;
-
-            float sampleAttenuation = exp(-(pathLength)*muT);
-            transmittance *= sampleAttenuation;
-
-            float sample = curand_uniform(localState);
-
-            if (sample < nullPoint) {
-                continue;
-            }
-            else if (sample < nullPoint + absorbtion) {
-                color += Vec3T(1.f, 1.f, 1.f);
-                absorbed = true;
-            }
-            else {
-                float g = 0.5f;
-                if (world.grid->tree().isActive(coord)) {
-                  g = acc.getValue(coord);
-                }
-                float sample1 = curand_uniform(localState);
-                float sample2 = curand_uniform(localState);
-                rayDir = sampleHenyeyGreenstein(g, rayDir, sample1, sample2);
-
-                Vec3T iRayOrigin = iRay(far);
-
-                iRay = nanovdb::Ray<float>(iRayOrigin, rayDir);
-
-                if (!iRay.clip(world.box)) {
-                    break;
-                }
-                far = iRay.t0();
-            }
-        }
-        writeBuffer(image, i, width, height, 0.f, clamp(.0f, 1.f, 1.0f - transmittance), color);
+        DeltaTrackingIntegration(i, world, rayEye, image, width, height, localState, sigmaMAJ, acc);
     }
+}
+
+void __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc) {
+    Vec3T rayDir = world.camera.direction(i);
+
+    RayT wRay(rayEye, rayDir);
+    RayT iRay = wRay.worldToIndexF(*world.grid);
+
+    if (!iRay.clip(world.box)) {
+        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(0.1f, 0.1f, 0.1f));
+        return;
+    }
+
+    float transmittance = 1.0f;
+    bool absorbed = false;
+    Vec3T color{ 0.1f,0.1f,0.1f };
+    auto far = iRay.t0();
+
+    for (unsigned int depth = 0; !absorbed && depth < DEPTH_LIMIT; ++depth) {
+        auto coord = CoordT::Floor(iRay(far));
+
+        if (false && !world.box.isInside(coord)) {
+            break;
+        }
+
+        float sigma = 0.0f;
+        if (world.grid->tree().isActive(coord)) {
+            sigma = acc.getValue(coord) * DENSITY;
+        }
+
+        auto muA = sigma * SIGMA_A;
+        auto muS = sigma * SIGMA_S;
+        auto muT = muA + muS;
+
+        float pathLength;
+        if (sigma > 0.f) {
+            pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
+
+            pathLength *= 0.1f;
+            pathLength = clamp(MIN_STEP, MAX_STEP, pathLength);
+        }
+        else {
+            pathLength = MIN_STEP * 10.f;
+        }
+
+        far += pathLength;
+        auto t1 = iRay.t1();
+        if (far > t1)
+            break;
+
+        if (sigma <= 0.f) {
+            continue;
+        }
+
+        auto absorbtion = muA / sigmaMAJ;
+        auto scattering = muS / sigmaMAJ;
+        auto nullPoint = 1.f - absorbtion - scattering;
+
+        float sampleAttenuation = exp(-(pathLength)*muT);
+        transmittance *= sampleAttenuation;
+
+        float sample = curand_uniform(localState);
+
+        if (sample < nullPoint) {
+            continue;
+        }
+        else if (sample < nullPoint + absorbtion) {
+            color += Vec3T(1.f, 1.f, 1.f);
+            absorbed = true;
+        }
+        else {
+            float g = 0.5f;
+            if (world.grid->tree().isActive(coord)) {
+                g = acc.getValue(coord);
+            }
+            float sample1 = curand_uniform(localState);
+            float sample2 = curand_uniform(localState);
+            rayDir = sampleHenyeyGreenstein(g, rayDir, sample1, sample2);
+
+            Vec3T iRayOrigin = iRay(far);
+
+            iRay = nanovdb::Ray<float>(iRayOrigin, rayDir);
+
+            if (!iRay.clip(world.box)) {
+                break;
+            }
+            far = iRay.t0();
+        }
+    }
+    writeBuffer(image, i, width, height, 0.f, clamp(.0f, 1.f, 1.0f - transmittance), color);
+
+}
+
+void __device__ DirectLightIntegration(curandState* dStates, int width, int height, int start, int end, float* image, const World world) {
+
 }
 
 #endif

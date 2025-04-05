@@ -30,7 +30,7 @@ constexpr float SIGMA_S = 0.95f;
 constexpr float MIN_STEP = 0.5f;
 constexpr float MAX_STEP = 5.f;
 constexpr float PI = 3.14159265358979323846f;
-constexpr float DENSITY = 1.f;
+constexpr float DENSITY = 0.1f;
 constexpr unsigned int PIXEL_SAMPLES = 16;
 
 Vec3T UP = Vec3T {0.0f, 1.0f, 0.0f};
@@ -148,6 +148,124 @@ void __device__ runRender(curandState* dStates, int width, int height, int start
     }
 }
 
+float __device__ PointToPointMarching(
+    const World& world, 
+    Vec3T& startPos, // point in cloud
+    Vec3T& endPos, // light position
+    curandState* localState, 
+    float sigmaMAJ, 
+    nanovdb::DefaultReadAccessor<float>& acc,
+    float pfar,
+    RayT& piRay
+) {
+    // Calculate direction vector from start to end
+    auto start = piRay(pfar);
+    auto iEnd = world.grid->worldToIndex(endPos);
+    auto wStart = piRay.indexToWorldF(*world.grid)(pfar);
+    Vec3T rayDir = iEnd - start;
+    float totalDistance = rayDir.length();
+    auto transmittance = 1.0f;
+    
+    // Normalize the direction
+    rayDir.normalize();
+
+    // Set up rays in world and index space
+    RayT iRay(start, rayDir);
+    // RayT iRay = wRay.worldToIndexF(*world.grid);
+
+    // If ray doesn't intersect with the grid, return background color. Might be unnecessary condition
+    if (!iRay.clip(world.box)) {
+        printf("RIP\n");
+        return transmittance;
+    }
+
+    bool absorbed = false;
+    // auto start = iRay.start();
+    // printf("iRayStart: (%.4f, %.4f, %.4f), start: (%.4f, %.4f, %.4f)\n", iRay(pfar)[0], iRay(pfar)[1], iRay(pfar)[2], start[0], start[1], start[2]);
+    auto far = iRay.t0();
+    float distanceTraveled = 0.0f;
+
+    while (true) {
+        auto coord = CoordT::Floor(iRay(far));
+
+        // Get current 3D position in world space
+        Vec3T currentPos = iRay(far);
+        
+        // Calculate remaining distance
+        Vec3T remainingVec = iEnd - currentPos;
+        distanceTraveled = (start - currentPos).length();
+        
+        // If we've reached (or passed) the target point, break
+        if (distanceTraveled >= totalDistance) {
+            break;
+        }
+
+        // Sample the grid at current position
+        float sigma = 0.0f;
+        if (world.grid->tree().isActive(coord)) {
+            sigma = acc.getValue(coord) * DENSITY;
+        }
+
+        auto muA = sigma * SIGMA_A;
+        auto muS = sigma * SIGMA_S;
+        auto muT = muA + muS;
+
+        // Sample path length
+        float pathLength;
+        if (sigma > 0.f) {
+            pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
+            pathLength *= 1.0f; // step size multiplier
+            pathLength = clamp(MIN_STEP, MAX_STEP, pathLength);
+        } else {
+            pathLength = MIN_STEP * 10.f;
+        }
+
+        far += pathLength;
+        auto t1 = iRay.t1();
+        if (far > t1)
+            return transmittance;
+
+        if (sigma <= 0.f) {
+            continue;
+        }
+
+        float sampleAttenuation = exp(-(pathLength)*muT);
+        transmittance *= sampleAttenuation;
+
+        if (transmittance < 0.05f) {
+            float q = 0.75f; // check what q should be like
+
+            float sample = curand_uniform(localState);
+            if (sample < q) {
+                transmittance = 0.f;
+            } else {
+                transmittance /= 1.0f - q;
+            }
+        }
+
+        if (transmittance <= 0.0f) {
+            return 0.f;
+        }
+    }
+
+    return transmittance;
+}
+
+float __device__ dot(const Vec3T& a, const Vec3T& b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+float __device__ henyey_greenstein(const float& g, const float& cos_theta)
+{
+    float denom = 1 + g * g - 2 * g * cos_theta;
+    return 1 / (4 * PI) * (1 - g * g) / (denom * sqrtf(denom));
+}
+
+Vec3T __device__ vecFromRay(Vec3T vec)
+{
+    return Vec3T(vec[0], vec[1], vec[2]);
+}
+
 Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc) {
     Vec3T rayDir = world.camera.direction(i);
 
@@ -157,7 +275,7 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
     auto backgroundColor = Vec3T(0.36f, 0.702f, 0.98f);
 
     if (!iRay.clip(world.box)) {
-        auto color = Vec4T(backgroundColor[0], backgroundColor[1], backgroundColor[2], 0.0f);
+        auto color = Vec4T(backgroundColor[0], backgroundColor[1], backgroundColor[2], 1.0f);
         return color;
     }
 
@@ -186,13 +304,14 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
         if (sigma > 0.f) {
             pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
 
-            pathLength *= 0.1f;
+            // pathLength *= 0.1f;
             pathLength = clamp(MIN_STEP, MAX_STEP, pathLength);
         }
         else {
             pathLength = MIN_STEP * 10.f;
         }
 
+        auto destFar = far;
         far += pathLength;
         auto t1 = iRay.t1();
         if (far > t1)
@@ -215,14 +334,46 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
             continue;
         }
         else if (sample < nullPoint + absorbtion) {
-            color += Vec3T(1.f, 1.f, 1.f);
+            color += Vec3T(0.0f, 0.0f, 0.0f);
             absorbed = true;
         }
         else {
+            // sample direct light
             float g = 0.2f;
             if (world.grid->tree().isActive(coord)) {
                 g = acc.getValue(coord);
             }
+
+            Vec3T lightPos(-0.92f, 100.f, 70.96f);
+            auto positionInCloud = wRay(destFar);  // Convert from index to world coordinates
+            auto iEye = CoordT::Floor(iRay(destFar)).asVec3d();
+            auto start = iRay.start();
+
+            // printf("first: (%.4f, %.4f, %.4f), second: (%.4f, %.4f, %.4f)\n", start[0], start[1], start[2], iEye[0], iEye[1], iEye[2]);
+
+            float lightTransmittance = PointToPointMarching(world, positionInCloud, lightPos, localState, sigmaMAJ, acc, destFar, iRay);
+            float cosTheta = dot(rayDir, lightPos - positionInCloud);
+            // TODO: Missing GreensteinPDF
+            float greensteinPDF = henyey_greenstein(g, cosTheta);
+
+            // Check if greensteinPDF is NaN and replace with 0 if it is
+            if (isnan(greensteinPDF)) {
+                greensteinPDF = 0.0f;
+            }
+            // color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f) * pathLength * greensteinPDF * 0.0001f;
+            // printf(
+            //     "rayEye: (%.4f, %.4f, %.4f), rayDir: (%.4f, %.4f, %.4f), iEye: (%.4f, %.4f, %.4f), eye: (%.4f, %4.f, %4.f), lightTransmittance: %.4f, transmittance: %.4f, greensteinPDF: %.4f\n",
+            //     rayEye[0], rayEye[1], rayEye[2],
+            //     rayDir[0], rayDir[1], rayDir[2],
+            //     eye[0], eye[1], eye[2],
+            //     iEye[0], iEye[1], iEye[2],
+            //     lightTransmittance, transmittance, greensteinPDF
+            // );
+
+            // color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f) * greensteinPDF * 100.f;
+            color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
+            printf("lightTransmittance: %.4f, transmittance: %.4f, greensteinPDF: %.4f\n", lightTransmittance, transmittance, greensteinPDF);
+
             float sample1 = curand_uniform(localState);
             float sample2 = curand_uniform(localState);
             rayDir = sampleHenyeyGreenstein(g, rayDir, sample1, sample2);
@@ -240,7 +391,14 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
     }
 
     if (!absorbed) {
-        color += backgroundColor;
+        color += backgroundColor * transmittance;
+
+        // // sample direct light
+        // Vec3T lightPos(1.f, 1.f, 1.f);
+        // float directLight = PointToPointMarching(world, rayEye, lightPos, image, width, height, localState, sigmaMAJ, acc);
+        // float cosTheta = dot(rayDir, lightPos - rayEye);
+        // // TODO: Missing GreensteinPDF
+        // color += directLight * cosTheta * transmittance * backgroundColor;
     }
 
     return Vec4T(color[0], color[1], color[2], 1.f - transmittance);

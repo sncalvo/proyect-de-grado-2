@@ -372,7 +372,6 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
 
             // color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f) * greensteinPDF * 100.f;
             color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
-            printf("lightTransmittance: %.4f, transmittance: %.4f, greensteinPDF: %.4f\n", lightTransmittance, transmittance, greensteinPDF);
 
             float sample1 = curand_uniform(localState);
             float sample2 = curand_uniform(localState);

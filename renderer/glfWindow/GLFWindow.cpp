@@ -15,9 +15,6 @@
 // ======================================================================== //
 
 #include "GLFWindow.h"
-#include "imgui.h"
-#include "backends/imgui_impl_opengl3.h"
-#include "backends/imgui_impl_glfw.h"
 
 /*! \namespace osc - Optix Siggraph Course */
 namespace MCRenderer {
@@ -39,12 +36,24 @@ GLFWindow::GLFWindow(const std::string &title) {
   if (!glfwInit())
     exit(EXIT_FAILURE);
 
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-  glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+  // glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 
   handle = glfwCreateWindow(400, 400, title.c_str(), NULL, NULL);
   if (!handle) {
+    glfwTerminate();
+    exit(EXIT_FAILURE);
+  }
+
+  glfwMakeContextCurrent(handle);
+
+  GLFWwindow *window = glfwGetCurrentContext();
+  assert(window != nullptr);
+
+  if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    std::cerr << "Failed to initialize GLAD" << std::endl;
     glfwTerminate();
     exit(EXIT_FAILURE);
   }

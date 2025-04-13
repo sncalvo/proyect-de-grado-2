@@ -19,10 +19,10 @@
 // common gdt helper tools
 #include "gdt/math/AffineSpace.h"
 // glfw framework
-#define GLFW_INCLUDE_NONE
+// #define GLFW_INCLUDE_NONE
 
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
-
 
 /*! \namespace osc - Optix Siggraph Course */
 namespace MCRenderer {

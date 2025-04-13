@@ -1,15 +1,14 @@
 {
   "dependencies": [
-    "boost",
-    "tbb",
     "blosc",
-    "yaml-cpp",
-    "glfw3",
+    "boost",
     {
       "name": "openvdb",
       "features": [
         "nanovdb"
       ]
-    }
+    },
+    "tbb",
+    "yaml-cpp"
   ]
 }

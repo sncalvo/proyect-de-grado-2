@@ -20,6 +20,8 @@ add_executable(mcrenderer
   image.h
   glfWindow/GLFWindow.h
   glfWindow/GLFWindow.cpp
+  GLRender.h
+  GLRender.cpp
   integrator.cuh
   ray.cuh
 )
@@ -37,12 +39,11 @@ endif()
 set(CMAKE_CUDA_FLAGS "${NANOVDB_CUDA_EXTENDED_LAMBDA} -G -use_fast_math ${CMAKE_CUDA_FLAGS}")
 
 find_package(yaml-cpp CONFIG REQUIRED)
-find_package(glfw3 CONFIG REQUIRED)
 
 target_link_libraries(mcrenderer
   ${OPENGL_gl_LIBRARY}
   OpenVDB::openvdb
   gdt
   glfw
-  imgui
+  glad
 )

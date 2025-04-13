@@ -20,6 +20,15 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${gdt_dir}/cmake/")
 
 set(CMAKE_TOOLCHAIN_FILE "C:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake")
 
+# Configure GLFW as static library
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)    # Optional: disable docs
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)   # Optional: disable tests
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE) # Optional: disable examples
+
+# Add GLFW from local source
+add_subdirectory(common/3rdParty/glfw3)
+
 if (MSVC)
   add_compile_options(/bigobj)
 else ()
@@ -30,7 +39,7 @@ include_directories(${gdt_dir})
 add_subdirectory(${gdt_dir})
 
 include_directories(common)
-add_subdirectory(common/3rdParty/imgui)
-include_directories(common/3rdParty/imgui/imgui)
 
 add_subdirectory(renderer)
+
+add_subdirectory(common/glad)

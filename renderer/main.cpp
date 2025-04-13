@@ -14,6 +14,8 @@
 
 #include "image.h"
 
+#include "GLRender.h"
+
 void version(const char* progName, int exitStatus = EXIT_SUCCESS)
 {
     printf("\n%s was build against NanoVDB version %s\n", progName, nanovdb::Version().c_str());
@@ -26,6 +28,7 @@ extern void runNanoVDB(nanovdb::GridHandle<BufferT>& handle, Image& image);
 
 int main(int ac, char** av)
 {
+    auto render = MCRenderer::GLRender();
     try {
         nanovdb::GridHandle<BufferT> handle;
         if (true || ac > 1) {
@@ -53,6 +56,7 @@ int main(int ac, char** av)
                 file.close();
 
                 openvdb::FloatGrid::Ptr grid = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
+                render.setGrid(grid);
 
                 // Convert the OpenVDB grid into a NanoVDB grid handle.
                 auto handle = nanovdb::openToNanoVDB(grid);
@@ -80,9 +84,13 @@ int main(int ac, char** av)
 
         Image image(width, height);
 
-        runNanoVDB(handle, image);
+        // runNanoVDB(handle, image);
 
-        image.save("raytrace_level_set-nanovdb-cuda-1.pfm");
+        // image.save("raytrace_level_set-nanovdb-cuda-1.pfm");
+
+        MCRenderer::SampleWindow window("Raytracing", MCRenderer::Camera(), 1.0f);
+        render.init();
+        window.run();
     }
     catch (const std::exception& e) {
         std::cerr << "An exception occurred: \"" << e.what() << "\"" << std::endl;

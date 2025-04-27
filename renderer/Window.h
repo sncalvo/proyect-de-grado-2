@@ -13,6 +13,7 @@
 
 #include <glad/glad.h>
 
+#include "GLRender.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -77,6 +78,8 @@ public:
     glDisable(GL_DEPTH_TEST);
 
     glViewport(0, 0, fbSize.x, fbSize.y);
+
+    renderer->draw();
   }
 
   virtual void resize(const vec2i &newSize) {
@@ -89,6 +92,13 @@ public:
   std::vector<uint32_t> pixels;
 
   bool testWindow = true;
+
+  void setRenderer(GLRender *renderer) {
+    this->renderer = renderer;
+  }
+
+private:
+  GLRender *renderer;
 };
 } // namespace MCRenderer
 #endif

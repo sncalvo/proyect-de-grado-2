@@ -24,6 +24,9 @@ namespace MCRenderer
 
   void GLRender::draw()
   {
+    glBindVertexArray(VAO);
+    glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
   }
 
   void GLRender::init()
@@ -39,38 +42,62 @@ namespace MCRenderer
 
     auto currentIndex = 0;
 
-    // for (openvdb::FloatGrid::ValueOnCIter iter = m_Grid->cbeginValueOn(); iter; ++iter)
-    // {
-    //   openvdb::FloatGrid::TreeType::RootNodeType::ChildNodeType::ChildNodeType::ChildNodeType *node = nullptr;
-    //   auto worldPosition = iter.getCoord().asVec3d();
+    for (openvdb::FloatGrid::ValueOnCIter iter = m_Grid->cbeginValueOn(); iter; ++iter)
+    {
+      openvdb::FloatGrid::TreeType::RootNodeType::ChildNodeType::ChildNodeType::ChildNodeType *node = nullptr;
+      auto worldPosition = iter.getCoord().asVec3d();
 
-    //   // std::cout << "Grid " << iter.getCoord() << " = " << *iter << " " << iter.getBoundingBox() << ", depth: " << iter.getDepth() << ", origin: " << worldPosition << ", size: " << gridVoxelSize << std::endl;
+      // std::cout << "Grid " << iter.getCoord() << " = " << *iter << " " << iter.getBoundingBox() << ", depth: " << iter.getDepth() << ", origin: " << worldPosition << ", size: " << gridVoxelSize << std::endl;
 
-    //   float size = gridVoxelSize[0];
-    //   float x = worldPosition[0];
-    //   float y = worldPosition[1];
-    //   float z = worldPosition[2];
+      float size = gridVoxelSize[0];
+      float x = worldPosition[0];
+      float y = worldPosition[1];
+      float z = worldPosition[2];
 
-    //   // Define the 8 vertices of a cube
-    //   // Vertex 0: bottom-left-back
-    //   vertices.push_back(x - size / 2);
-    //   vertices.push_back(y - size / 2);
-    //   vertices.push_back(z - size / 2);
-    //   // ... [Same vertex definitions as before]
-    //   // Vertex 7: top-left-front
-    //   vertices.push_back(x - size / 2);
-    //   vertices.push_back(y + size / 2);
-    //   vertices.push_back(z + size / 2);
-
-    //   // Define the 12 triangles (same as before)
-    //   // Front face
-    //   indices.push_back(currentIndex + 4);
-    //   indices.push_back(currentIndex + 5);
-    //   indices.push_back(currentIndex + 6);
-    //   // ... [Same indices definitions as before]
+      // Define the 8 vertices of a cube
+      // Define the 8 vertices of a cube
+      // Each vertex has position (x,y,z) and color (r,g,b)
+      // Format: x, y, z, r, g, b
       
-    //   currentIndex += 8;
-    // }
+      // Bottom face vertices
+      vertices.push_back(x - size/2); vertices.push_back(y - size/2); vertices.push_back(z - size/2); // Position
+      vertices.push_back(x + size/2); vertices.push_back(y - size/2); vertices.push_back(z - size/2);
+      vertices.push_back(x + size/2); vertices.push_back(y - size/2); vertices.push_back(z + size/2);
+      vertices.push_back(x - size/2); vertices.push_back(y - size/2); vertices.push_back(z + size/2);
+      
+      // Top face vertices
+      vertices.push_back(x - size/2); vertices.push_back(y + size/2); vertices.push_back(z - size/2);
+      vertices.push_back(x + size/2); vertices.push_back(y + size/2); vertices.push_back(z - size/2);
+      vertices.push_back(x + size/2); vertices.push_back(y + size/2); vertices.push_back(z + size/2);
+      vertices.push_back(x - size/2); vertices.push_back(y + size/2); vertices.push_back(z + size/2);
+
+      // Define the 12 triangles (same as before)
+      // Bottom face
+      indices.push_back(currentIndex + 0); indices.push_back(currentIndex + 1); indices.push_back(currentIndex + 2);
+      indices.push_back(currentIndex + 2); indices.push_back(currentIndex + 3); indices.push_back(currentIndex + 0);
+
+      // Top face
+      indices.push_back(currentIndex + 4); indices.push_back(currentIndex + 5); indices.push_back(currentIndex + 6);
+      indices.push_back(currentIndex + 6); indices.push_back(currentIndex + 7); indices.push_back(currentIndex + 4);
+      
+      // Front face
+      indices.push_back(currentIndex + 0); indices.push_back(currentIndex + 3); indices.push_back(currentIndex + 7);
+      indices.push_back(currentIndex + 7); indices.push_back(currentIndex + 4); indices.push_back(currentIndex + 0);
+      
+      // Back face
+      indices.push_back(currentIndex + 1); indices.push_back(currentIndex + 5); indices.push_back(currentIndex + 6);
+      indices.push_back(currentIndex + 6); indices.push_back(currentIndex + 2); indices.push_back(currentIndex + 1);
+      
+      // Left face
+      indices.push_back(currentIndex + 0); indices.push_back(currentIndex + 4); indices.push_back(currentIndex + 5);
+      indices.push_back(currentIndex + 5); indices.push_back(currentIndex + 1); indices.push_back(currentIndex + 0);
+      
+      // Right face
+      indices.push_back(currentIndex + 3); indices.push_back(currentIndex + 2); indices.push_back(currentIndex + 6);
+      indices.push_back(currentIndex + 6); indices.push_back(currentIndex + 7); indices.push_back(currentIndex + 3);
+
+      currentIndex += 8;
+    }
 
     VAO = 0;
     VBO = 0;

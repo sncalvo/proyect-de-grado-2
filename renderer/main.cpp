@@ -90,6 +90,7 @@ int main(int ac, char** av)
 
         MCRenderer::SampleWindow window("Raytracing", MCRenderer::Camera(), 1.0f);
         render.init();
+        window.setRenderer(&render);
         window.run();
     }
     catch (const std::exception& e) {

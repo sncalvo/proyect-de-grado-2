@@ -85,6 +85,11 @@ public:
         }
     }
 
+    void clear()
+    {
+        m_buffer.init(m_width * m_height * 3 * sizeof(float), true);
+    }
+
     int width() const { return m_width; }
     int height() const { return m_height; }
 };

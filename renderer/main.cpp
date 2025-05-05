@@ -13,6 +13,7 @@
 #include "Camera.h"
 
 #include "image.h"
+#include "settings.h"
 
 #include "GLRender.h"
 
@@ -25,6 +26,15 @@ void version(const char* progName, int exitStatus = EXIT_SUCCESS)
 using BufferT = nanovdb::CudaDeviceBuffer;
 
 extern void runNanoVDB(nanovdb::GridHandle<BufferT>& handle, Image& image);
+
+void runNano(nanovdb::GridHandle<BufferT>* handle, Image* image) {
+    auto lightPos = Settings::getInstance().lightLocation;
+    std::cout << "Begin render with light" << lightPos[0] << "," << lightPos[1] << "," << lightPos[2] << std::endl;
+    image->clear();
+    runNanoVDB(*handle, *image);
+    image->save("raytrace_level_set-nanovdb-cuda-1.pfm");
+    std::cout << "End render" << std::endl;
+}
 
 int main(int ac, char** av)
 {
@@ -91,7 +101,10 @@ int main(int ac, char** av)
         MCRenderer::SampleWindow window("Raytracing", MCRenderer::Camera(), 1.0f);
         render.init();
         window.setRenderer(&render);
-        window.run();
+
+        std::function<void()> lambda = std::bind(runNano, &handle, &image);
+
+        window.run(lambda);
     }
     catch (const std::exception& e) {
         std::cerr << "An exception occurred: \"" << e.what() << "\"" << std::endl;

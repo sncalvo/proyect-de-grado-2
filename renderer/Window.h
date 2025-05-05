@@ -49,14 +49,21 @@ public:
   SampleWindow(const std::string &title,
                const Camera &camera,
                const float worldScale)
-      : GLFCameraWindow(title, camera.from, camera.at, camera.up, worldScale)
+      : GLFCameraWindow(title, camera.from, camera.at, camera.up, worldScale),
+        camera(camera)
          {
 
     setupEvents();
   }
 
   virtual void render() override {
-
+    // Update camera transformation matrices
+    updateCamera();
+    
+    // Call the renderer's render method
+    if (renderer) {
+      renderer->render();
+    }
   }
 
   virtual void draw() override {
@@ -76,6 +83,7 @@ public:
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glDisable(GL_DEPTH_TEST);
+    glEnable(GL_DEPTH_TEST);
 
     glViewport(0, 0, fbSize.x, fbSize.y);
 
@@ -99,6 +107,57 @@ public:
 
 private:
   GLRender *renderer;
+  const Camera &camera;
+
+  void updateCamera() {
+    if (!renderer) return;
+    
+    // Model matrix (identity)
+    float modelMatrix[16] = {
+      1.0f, 0.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 0.0f, 1.0f
+    };
+    
+    // View matrix based on camera position and orientation
+    vec3f pos = camera.from;
+    vec3f at = camera.at;
+    vec3f up = camera.up;
+    
+    // Calculate look direction (z-axis)
+    vec3f z = normalize(pos - at);
+    vec3f x = normalize(cross(up, z));
+    vec3f y = cross(z, x);
+    
+    float viewMatrix[16] = {
+      x.x, y.x, z.x, 0.0f,
+      x.y, y.y, z.y, 0.0f,
+      x.z, y.z, z.z, 0.0f,
+      -dot(x, pos), -dot(y, pos), -dot(z, pos), 1.0f
+    };
+    
+    // Projection matrix
+    float fov = 45.0f;
+    float aspect = (float)fbSize.x / (float)fbSize.y;
+    float zNear = 0.1f;
+    float zFar = 100.0f;
+    
+    float tanHalfFov = tanf((fov / 2.0f) * (3.14159f / 180.0f));
+    float f = 1.0f / tanHalfFov;
+    
+    float projMatrix[16] = {
+      f / aspect, 0.0f, 0.0f, 0.0f,
+      0.0f, f, 0.0f, 0.0f,
+      0.0f, 0.0f, (zFar + zNear) / (zNear - zFar), -1.0f,
+      0.0f, 0.0f, (2.0f * zFar * zNear) / (zNear - zFar), 0.0f
+    };
+    
+    // Set the matrices in the renderer
+    renderer->setModelMatrix(modelMatrix);
+    renderer->setViewMatrix(viewMatrix);
+    renderer->setProjectionMatrix(projMatrix);
+  }
 };
 } // namespace MCRenderer
 #endif

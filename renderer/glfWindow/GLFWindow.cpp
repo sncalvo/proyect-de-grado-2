@@ -15,6 +15,10 @@
 // ======================================================================== //
 
 #include "GLFWindow.h"
+#include "../imgui/imgui.h"
+#include "../imgui/imgui_impl_glfw.h"
+#include "../imgui/imgui_impl_opengl3.h"
+#include "../settings.h"
 
 /*! \namespace osc - Optix Siggraph Course */
 namespace MCRenderer {
@@ -57,6 +61,12 @@ GLFWindow::GLFWindow(const std::string &title) {
     glfwTerminate();
     exit(EXIT_FAILURE);
   }
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO(); (void)io;
+  ImGui_ImplGlfw_InitForOpenGL(window, true);
+  ImGui_ImplOpenGL3_Init("#version 330 core");
 
   glfwSetWindowUserPointer(handle, this);
   glfwMakeContextCurrent(handle);
@@ -101,24 +111,79 @@ static void glfwindow_mouseButton_cb(GLFWwindow *window, int button, int action,
 }
 
 void GLFWindow::setupEvents() {
-  glfwSetFramebufferSizeCallback(handle, glfwindow_reshape_cb);
-  glfwSetMouseButtonCallback(handle, glfwindow_mouseButton_cb);
-  glfwSetKeyCallback(handle, glfwindow_key_cb);
-  glfwSetCursorPosCallback(handle, glfwindow_mouseMotion_cb);
+  //glfwSetFramebufferSizeCallback(handle, glfwindow_reshape_cb);
+  //glfwSetMouseButtonCallback(handle, glfwindow_mouseButton_cb);
+  //glfwSetKeyCallback(handle, glfwindow_key_cb);
+  //glfwSetCursorPosCallback(handle, glfwindow_mouseMotion_cb);
 }
 
-void GLFWindow::run() {
+void GLFWindow::run(std::function<void()>& lambda) {
   int width, height;
   glfwGetFramebufferSize(handle, &width, &height);
   resize(vec2i(width, height));
 
+  // Create a window called "My First Tool", with a menu bar.
+  bool open = true;
+
+  float color[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+  float lightLocation[3] = { 0.f, 0.f, 0.f };
+  float cameraLocation[3] = { 0.f, 0.f, 0.f };
+
   while (!glfwWindowShouldClose(handle)) {
-    glfwSwapBuffers(handle);
-    glfwPollEvents();
+    // Specify the color of the background
+    glClearColor(0.07f, 0.13f, 0.17f, 1.0f);
+    // Clean the back buffer and assign the new color to it
+    glClear(GL_COLOR_BUFFER_BIT);
 
     render();
     draw();
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGui::Begin("My First Tool", &open, ImGuiWindowFlags_MenuBar);
+    if (ImGui::BeginMenuBar())
+    {
+        if (ImGui::BeginMenu("File"))
+        {
+            if (ImGui::MenuItem("Open..", "Ctrl+O")) { /* Do stuff */ }
+            if (ImGui::MenuItem("Save", "Ctrl+S")) { /* Do stuff */ }
+            if (ImGui::MenuItem("Close", "Ctrl+W")) { open = false; }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
+    }
+
+    // Edit a color stored as 4 floats
+
+    // Display contents in a scrolling region
+    ImGui::BeginChild("settings");
+    ImGui::Text("Light");
+    ImGui::InputFloat3("LightLocation", Settings::getInstance().lightLocation, "%.2f");
+    ImGui::ColorEdit3("Color", Settings::getInstance().lightColor);
+
+    ImGui::Text("Camera");
+    ImGui::InputFloat3("CameraLocation", Settings::getInstance().cameraLocation, "%.2f");
+    ImGui::EndChild();
+
+    if (ImGui::Button("Render")) {
+      // render
+        lambda();
+    }
+    ImGui::End(); 
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    glfwSwapBuffers(handle);
+    glfwPollEvents();
   }
+
+  // Deletes all ImGUI instances
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
 }
 
 } // namespace MCRenderer

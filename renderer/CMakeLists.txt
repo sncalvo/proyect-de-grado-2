@@ -20,10 +20,26 @@ add_executable(mcrenderer
   image.h
   glfWindow/GLFWindow.h
   glfWindow/GLFWindow.cpp
+  imgui/imgui.h
+  imgui/imgui.cpp
+  imgui/imconfig.h
+  imgui/imgui_internal.h
+  imgui/imgui_widgets.cpp
+  imgui/imgui_draw.cpp
+  imgui/imgui_tables.cpp
+  imgui/imgui_impl_glfw.cpp
+  imgui/imgui_impl_glfw.h
+  imgui/imstb_rectpack.h
+  imgui/imstb_textedit.h
+  imgui/imstb_truetype.h
+  imgui/imgui_impl_opengl3.h
+  imgui/imgui_impl_opengl3.cpp
+  imgui/imgui_impl_opengl3_loader.h
   GLRender.h
   GLRender.cpp
   integrator.cuh
   ray.cuh
+  settings.h
 )
 
 find_package(OpenVDB CONFIG REQUIRED)

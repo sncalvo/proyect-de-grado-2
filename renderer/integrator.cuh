@@ -11,6 +11,7 @@
 
 #include "ray.cuh"
 #include "common.cuh"
+#include "settings.h"
 
 #include <curand.h>
 #include <curand_kernel.h>
@@ -31,7 +32,7 @@ constexpr float MIN_STEP = 0.5f;
 constexpr float MAX_STEP = 5.f;
 constexpr float PI = 3.14159265358979323846f;
 constexpr float DENSITY = 0.1f;
-constexpr unsigned int PIXEL_SAMPLES = 16;
+constexpr unsigned int PIXEL_SAMPLES = 8;
 
 Vec3T UP = Vec3T {0.0f, 1.0f, 0.0f};
 
@@ -71,7 +72,7 @@ struct World {
   float maxSigma;
 };
 
-void __device__ runRender(curandState* state, int width, int height, int start, int end, float* image, const World world);
+void __device__ runRender(curandState* state, int width, int height, int start, int end, float* image, const World world, Vec3T lightPosition);
 float getDuration(std::chrono::steady_clock::time_point t0, std::chrono::steady_clock::time_point t1) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.f;
 }
@@ -94,15 +95,21 @@ public:
 
     float start(int width, int height, float* image)
     {
+        auto cameraPositionOffset = Settings::getInstance().cameraLocation;
         Camera camera(wBBoxDimZ(), wBBoxCenter(), width, height);
         float maxSigma = nanovdb::getExtrema(*hostGrid(), hostGrid()->indexBBox());
         World world = { camera, deviceGrid(), hostGrid()->tree().bbox(), maxSigma };
+        auto lightPosition = Settings::getInstance().lightLocation;
 
         auto t0 = ClockT::now();
 
+        auto vectorLightPosition = Vec3T(lightPosition[0], lightPosition[1], lightPosition[2]);
+
+        printf("Light position: (%.4f, %.4f, %.4f)\n", vectorLightPosition[0], vectorLightPosition[1], vectorLightPosition[2]);
+
         computeForEach(
-            m_useCuda, width * height, 128, __FILE__, __LINE__, [width, height, image, world] __device__ (int start, int end, curandState * dStates) {
-              runRender(dStates, width, height, start, end, image, world);
+            m_useCuda, width * height, 128, __FILE__, __LINE__, [width, height, image, world, vectorLightPosition] __device__ (int start, int end, curandState * dStates) {
+              runRender(dStates, width, height, start, end, image, world, vectorLightPosition);
             });
         computeSync(m_useCuda, __FILE__, __LINE__);
 
@@ -125,9 +132,9 @@ float __device__ clamp(float min, float max, float value) {
     return value;
 }
 
-Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc);
+Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc, Vec3T lightPosition);
 
-void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const World world) {
+void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const World world, Vec3T lightPosition) {
     auto acc = world.grid->tree().getAccessor();
     auto id = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -140,7 +147,7 @@ void __device__ runRender(curandState* dStates, int width, int height, int start
     for (int i = start; i < end; ++i) {
         Vec4T totalColor;
         for (int j = 0; j < PIXEL_SAMPLES; ++j) {
-            Vec4T color = DeltaTrackingIntegration(i, world, rayEye, image, width, height, localState, sigmaMAJ, acc);
+            Vec4T color = DeltaTrackingIntegration(i, world, rayEye, image, width, height, localState, sigmaMAJ, acc, lightPosition);
             totalColor += color;
         }
         totalColor /= PIXEL_SAMPLES;
@@ -266,7 +273,7 @@ Vec3T __device__ vecFromRay(Vec3T vec)
     return Vec3T(vec[0], vec[1], vec[2]);
 }
 
-Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc) {
+Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc, Vec3T lightPosition) {
     Vec3T rayDir = world.camera.direction(i);
 
     RayT wRay(rayEye, rayDir);
@@ -344,15 +351,15 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
                 g = acc.getValue(coord);
             }
 
-            Vec3T lightPos(-0.92f, 100.f, 70.96f);
+            // Vec3T lightPos(-0.92f, 100.f, 70.96f);
             auto positionInCloud = wRay(destFar);  // Convert from index to world coordinates
             auto iEye = CoordT::Floor(iRay(destFar)).asVec3d();
             auto start = iRay.start();
 
             // printf("first: (%.4f, %.4f, %.4f), second: (%.4f, %.4f, %.4f)\n", start[0], start[1], start[2], iEye[0], iEye[1], iEye[2]);
 
-            float lightTransmittance = PointToPointMarching(world, positionInCloud, lightPos, localState, sigmaMAJ, acc, destFar, iRay);
-            float cosTheta = dot(rayDir, lightPos - positionInCloud);
+            float lightTransmittance = PointToPointMarching(world, positionInCloud, lightPosition, localState, sigmaMAJ, acc, destFar, iRay);
+            float cosTheta = dot(rayDir, lightPosition - positionInCloud);
             // TODO: Missing GreensteinPDF
             float greensteinPDF = henyey_greenstein(g, cosTheta);
 

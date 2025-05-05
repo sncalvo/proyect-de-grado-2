@@ -23,6 +23,9 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <functional>
+
+#include "../imgui/imgui.h"
 
 /*! \namespace osc - Optix Siggraph Course */
 namespace MCRenderer {
@@ -71,7 +74,7 @@ namespace MCRenderer {
     /*! opens the actual window, and runs the window's events to
       completion. This function will only return once the window
       gets closed */
-    void run();
+    void run(std::function<void()>& lambda);
 
     /*! the glfw window handle */
     GLFWwindow *handle { nullptr };

@@ -208,7 +208,6 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
         float pathLength;
         if (sigma > 0.f) {
             pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
-            pathLength = clamp(MIN_STEP, MAX_STEP, pathLength);
         }
         else {
             pathLength = MIN_STEP * 10.f;
@@ -246,7 +245,7 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
                 g = acc.getValue(coord);
             }
 
-            Vec3T positionInCloud = wRay(destFar);
+            Vec3T positionInCloud = wRay(far);
             
             float lightTransmittance = PointToPointMarching<WorldT, Vec3T, RayT, AccessorT, CoordT>(
                 world, positionInCloud, lightPosition, localState, sigmaMAJ, acc, destFar, iRay);
@@ -267,7 +266,8 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
             float newPDF = henyey_greenstein(g, cosTheta);
             float sectionPDF = balanceHeuristic(newPDF, 1, greensteinPDF, 1);
 
-            color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
+            float albedo = (muT > 0.f) ? (muS / muT) : 0.f;
+            color += albedo * lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
 
             // Create new ray in scattered direction
             Vec3T newIRayOrigin = iRay(far);

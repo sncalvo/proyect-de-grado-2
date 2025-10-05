@@ -34,36 +34,46 @@ void version(const char* progName, int exitStatus = EXIT_SUCCESS)
 #endif
 
 #ifdef USE_CUDA
-void runNano(nanovdb::GridHandle<BufferT>* handle, Image* image, MCRenderer::SampleWindow* window) {
-    auto lightPos = Settings::getInstance().lightLocation;
-    std::cout << "Begin render with light" << lightPos[0] << "," << lightPos[1] << "," << lightPos[2] << std::endl;
-    image->clear();
-    
+// Render ONE sample - called from window loop
+void runNanoOneSample(nanovdb::GridHandle<BufferT>* handle, Image* image, MCRenderer::SampleWindow* window) {
+    // Render one sample for all pixels
     runNanoVDB(*handle, *image);
-    image->save("raytrace_level_set-nanovdb-cuda.pfm");
-    std::cout << "End render (CUDA)" << std::endl;
     
-    // Load rendered image to window
+    // Accumulate this sample
+    image->accumulateSample();
+    
+    // Update display progressively
     if (window) {
         window->loadImageToPixels(image);
     }
 }
 #else
-void runNano(openvdb::FloatGrid::Ptr* grid, Image* image, MCRenderer::SampleWindow* window) {
-    auto lightPos = Settings::getInstance().lightLocation;
-    std::cout << "Begin render with light" << lightPos[0] << "," << lightPos[1] << "," << lightPos[2] << std::endl;
-    image->clear();
-    
+// Render ONE sample - called from window loop
+void runNanoOneSample(openvdb::FloatGrid::Ptr* grid, Image* image, MCRenderer::SampleWindow* window) {
+    // Render one sample for all pixels
     runCPU(*grid, *image);
-    image->save("raytrace_level_set-cpu.pfm");
-    std::cout << "End render (CPU)" << std::endl;
     
-    // Load rendered image to window
+    // Accumulate this sample
+    image->accumulateSample();
+    
+    // Update display progressively
     if (window) {
         window->loadImageToPixels(image);
     }
 }
 #endif
+
+// Start rendering - called when user clicks "Render" button
+void startRender(Image* image) {
+    auto lightPos = Settings::getInstance().lightLocation;
+    unsigned int pixelSamples = Settings::getInstance().pixelSamples;
+    
+    std::cout << "Begin progressive render with light (" << lightPos[0] << "," << lightPos[1] << "," << lightPos[2] << ")" << std::endl;
+    std::cout << "Total samples to render: " << pixelSamples << std::endl;
+    
+    // Clear and reset accumulation
+    image->clear();
+}
 
 int main(int ac, char** av)
 {
@@ -144,13 +154,42 @@ int main(int ac, char** av)
         render.init();
         window.setRenderer(&render);
 
+        // Lambda called when user clicks "Render" button
+        std::function<void()> startRenderLambda = [&]() {
+            startRender(&image);
+            
+            // Capture the target sample count at start - don't read it dynamically
+            unsigned int targetSamples = Settings::getInstance().pixelSamples;
+            
+            // Set up progressive rendering callback
 #ifdef USE_CUDA
-        std::function<void()> lambda = std::bind(runNano, &handle, &image, &window);
+            window.startProgressiveRender([&, targetSamples]() {
+                unsigned int currentSample = image.getCurrentSample();
+                if (currentSample < targetSamples) {
+                    runNanoOneSample(&handle, &image, &window);
+                    std::cout << "Progress: " << image.getCurrentSample() << "/" << targetSamples << " samples completed" << std::endl;
+                } else {
+                    window.stopProgressiveRender();
+                    image.save("raytrace_level_set-nanovdb-cuda.pfm");
+                    std::cout << "Rendering complete: " << targetSamples << " samples accumulated and saved" << std::endl;
+                }
+            }, &image);
 #else
-        std::function<void()> lambda = std::bind(runNano, &grid, &image, &window);
+            window.startProgressiveRender([&, targetSamples]() {
+                unsigned int currentSample = image.getCurrentSample();
+                if (currentSample < targetSamples) {
+                    runNanoOneSample(&grid, &image, &window);
+                    std::cout << "Progress: " << image.getCurrentSample() << "/" << targetSamples << " samples completed" << std::endl;
+                } else {
+                    window.stopProgressiveRender();
+                    image.save("raytrace_level_set-cpu.pfm");
+                    std::cout << "Rendering complete: " << targetSamples << " samples accumulated and saved" << std::endl;
+                }
+            }, &image);
 #endif
+        };
 
-        window.run(lambda);
+        window.run(startRenderLambda);
     }
     catch (const std::exception& e) {
         std::cerr << "An exception occurred: \"" << e.what() << "\"" << std::endl;

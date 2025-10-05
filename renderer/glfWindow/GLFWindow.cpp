@@ -174,6 +174,18 @@ void GLFWindow::run(std::function<void()>& lambda) {
       // render
         lambda();
     }
+    
+    // Show progress indicator if rendering
+    if (getIsRendering()) {
+        ImGui::SameLine();
+        ImGui::Text("Rendering...");
+        int currentSample = getCurrentRenderSample();
+        unsigned int totalSamples = Settings::getInstance().pixelSamples;
+        float progress = totalSamples > 0 ? (float)currentSample / (float)totalSamples : 0.0f;
+        ImGui::ProgressBar(progress, ImVec2(0.0f, 0.0f));
+        ImGui::Text("Sample %d / %u", currentSample, totalSamples);
+    }
+    
     ImGui::End(); 
 
     ImGui::Render();

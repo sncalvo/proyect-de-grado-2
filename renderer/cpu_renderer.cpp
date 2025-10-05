@@ -24,8 +24,8 @@ inline void writeBuffer(float* outImage, int i, int w, int h, float value, float
     outImage[offset + 2] = color[2] * (1.f - alpha) + alpha * value + (1.0f - alpha) * bgb;
 }
 
-// Render function for each pixel
-void runRender(
+// Render function for each pixel - now processes ONE sample for all pixels
+void runRenderOneSample(
     RandomState* localState,
     int width, 
     int height, 
@@ -33,23 +33,19 @@ void runRender(
     int end, 
     float* image, 
     const CPUWorld& world, 
-    Vec3T lightPosition, 
-    unsigned int pixelSamples
+    Vec3T lightPosition
 ) {
     auto acc = world.grid->getAccessor();
     Vec3T rayEye = world.camera.origin();
     float sigmaMAJ = world.maxSigma * (SIGMA_A + SIGMA_S);
 
     for (int i = start; i < end; ++i) {
-        Vec4T totalColor;
-        for (unsigned int j = 0; j < pixelSamples; ++j) {
-            // Use shared algorithm
-            Vec4T color = DeltaTrackingIntegration<CPUWorld, Vec3T, Vec4T, RayT, GridT::Accessor, CoordT>(
-                i, world, rayEye, image, width, height, localState, sigmaMAJ, acc, lightPosition);
-            totalColor += color;
-        }
-        totalColor /= static_cast<float>(pixelSamples);
-        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(totalColor[0], totalColor[1], totalColor[2]));
+        // Render one sample for this pixel
+        Vec4T color = DeltaTrackingIntegration<CPUWorld, Vec3T, Vec4T, RayT, GridT::Accessor, CoordT>(
+            i, world, rayEye, image, width, height, localState, sigmaMAJ, acc, lightPosition);
+        
+        // Write the sample result directly (no averaging here - handled by Image class)
+        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(color[0], color[1], color[2]));
     }
 }
 
@@ -101,24 +97,21 @@ void runCPU(openvdb::FloatGrid::Ptr grid, Image& image)
     // Get settings
     auto lightLocation = Settings::getInstance().lightLocation;
     Vec3T lightPosition(lightLocation[0], lightLocation[1], lightLocation[2]);
-    unsigned int pixelSamples = Settings::getInstance().pixelSamples;
     
     std::cout << "Light position: (" << lightPosition[0] << ", " << lightPosition[1] << ", " << lightPosition[2] << ")" << std::endl;
-    std::cout << "Pixel samples: " << pixelSamples << std::endl;
+    std::cout << "Rendering ONE sample for " << numPixels << " pixels..." << std::endl;
     
     auto t0 = std::chrono::high_resolution_clock::now();
     
     // Get image buffer
     float* imageData = reinterpret_cast<float*>(image.deviceUpload());
     
-    std::cout << "Rendering " << numPixels << " pixels..." << std::endl;
-    
     // Initialize random state for CPU
     RandomState randomState;
-    random_init(&randomState, 42, 0, 0);
+    random_init(&randomState, 42, image.getCurrentSample(), 0);  // Use sample count as seed variation
     
-    // Render all pixels
-    runRender(&randomState, width, height, 0, numPixels, imageData, world, lightPosition, pixelSamples);
+    // Render ONE sample for all pixels
+    runRenderOneSample(&randomState, width, height, 0, numPixels, imageData, world, lightPosition);
     
     // Note: For CPU builds, deviceDownload is a no-op since data is already in RAM
     image.deviceDownload();
@@ -126,6 +119,5 @@ void runCPU(openvdb::FloatGrid::Ptr grid, Image& image)
     auto t1 = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.f;
     
-    std::cout << "Duration(CPU-OpenVDB) = " << duration << " ms" << std::endl;
-    std::cout << "CPU rendering complete!" << std::endl;
+    std::cout << "Sample " << (image.getCurrentSample() + 1) << " duration: " << duration << " ms" << std::endl;
 }

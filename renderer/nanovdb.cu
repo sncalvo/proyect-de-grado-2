@@ -29,6 +29,6 @@ void runNanoVDB(nanovdb::GridHandle<BufferT>& handle, Image& image)
     handle.deviceUpload();
 
     Integrator integrator(true, &handle);
-    auto duration = integrator.start(image.width(), image.height(), image.deviceUpload());
-    std::cout << "Duration(NanoVDB-Cuda) = " << duration << " ms" << std::endl;
+    auto duration = integrator.start(image.width(), image.height(), image.deviceUpload(), image.getCurrentSample());
+    std::cout << "Sample " << (image.getCurrentSample() + 1) << " duration(NanoVDB-Cuda) = " << duration << " ms" << std::endl;
 }

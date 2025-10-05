@@ -16,7 +16,7 @@
 using BufferT = nanovdb::CudaDeviceBuffer;
 using ClockT = std::chrono::high_resolution_clock;
 
-void __device__ runRender(curandState* state, int width, int height, int start, int end, float* image, const GPUWorld world, Vec3T lightPosition, unsigned int pixelSamples);
+void __device__ runRenderOneSample(curandState* state, int width, int height, int start, int end, float* image, const GPUWorld world, Vec3T lightPosition);
 float getDuration(std::chrono::steady_clock::time_point t0, std::chrono::steady_clock::time_point t1) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.f;
 }
@@ -37,7 +37,7 @@ public:
             throw std::runtime_error("GridHandle does not contain a valid device grid");
     }
 
-    float start(int width, int height, float* image)
+    float start(int width, int height, float* image, int currentSample)
     {
         auto cameraPositionOffset = Settings::getInstance().cameraLocation;
         Camera camera(wBBoxDimZ(), wBBoxCenter(), width, height);
@@ -48,12 +48,11 @@ public:
         auto t0 = ClockT::now();
 
         auto vectorLightPosition = Vec3T(lightPosition[0], lightPosition[1], lightPosition[2]);
-        auto pixelSamples = Settings::getInstance().pixelSamples;
-        printf("Light position: (%.4f, %.4f, %.4f)\npixel samples: %d\n", vectorLightPosition[0], vectorLightPosition[1], vectorLightPosition[2], pixelSamples);
+        printf("Light position: (%.4f, %.4f, %.4f)\nRendering sample %d\n", vectorLightPosition[0], vectorLightPosition[1], vectorLightPosition[2], currentSample + 1);
 
         computeForEach(
-            m_useCuda, width * height, 128, __FILE__, __LINE__, [width, height, image, world, vectorLightPosition, pixelSamples] __device__ (int start, int end, curandState * dStates) {
-              runRender(dStates, width, height, start, end, image, world, vectorLightPosition, pixelSamples);
+            m_useCuda, width * height, 128, __FILE__, __LINE__, [width, height, image, world, vectorLightPosition] __device__ (int start, int end, curandState * dStates) {
+              runRenderOneSample(dStates, width, height, start, end, image, world, vectorLightPosition);
             });
         computeSync(m_useCuda, __FILE__, __LINE__);
 
@@ -68,7 +67,7 @@ private:
     Vec3T wBBoxCenter() { return Vec3T(hostGrid()->worldBBox().min() + hostGrid()->worldBBox().dim() * 0.5f); }
 };
 
-void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const GPUWorld world, Vec3T lightPosition, unsigned int pixelSamples) {
+void __device__ runRenderOneSample(curandState* dStates, int width, int height, int start, int end, float* image, const GPUWorld world, Vec3T lightPosition) {
     auto acc = world.grid->tree().getAccessor();
     auto id = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -78,15 +77,12 @@ void __device__ runRender(curandState* dStates, int width, int height, int start
     float sigmaMAJ = world.maxSigma * (SIGMA_A + SIGMA_S);
 
     for (int i = start; i < end; ++i) {
-        Vec4T totalColor;
-        for (unsigned int j = 0; j < pixelSamples; ++j) {
-            // Use shared algorithm
-            Vec4T color = DeltaTrackingIntegration<GPUWorld, Vec3T, Vec4T, RayT, nanovdb::DefaultReadAccessor<float>, CoordT>(
-                i, world, rayEye, image, width, height, localState, sigmaMAJ, acc, lightPosition);
-            totalColor += color;
-        }
-        totalColor /= static_cast<float>(pixelSamples);
-        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(totalColor[0], totalColor[1], totalColor[2]));
+        // Render ONE sample for this pixel
+        Vec4T color = DeltaTrackingIntegration<GPUWorld, Vec3T, Vec4T, RayT, nanovdb::DefaultReadAccessor<float>, CoordT>(
+            i, world, rayEye, image, width, height, localState, sigmaMAJ, acc, lightPosition);
+        
+        // Write the sample result directly (no averaging here - handled by Image class)
+        writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(color[0], color[1], color[2]));
     }
 }
 

@@ -69,6 +69,11 @@ public:
     // Update camera transformation matrices
     updateCamera();
     
+    // If progressive rendering is active, render one sample per frame
+    if (isRendering && renderOneSampleCallback) {
+      renderOneSampleCallback();
+    }
+    
     // Call the renderer's render method
     if (renderer) {
       renderer->render();
@@ -129,9 +134,42 @@ public:
   std::vector<uint32_t> pixels;
 
   bool testWindow = true;
+  
+  // Progressive rendering state
+  bool isRendering = false;
+  std::function<void()> renderOneSampleCallback;
+  Image* currentImage = nullptr;
 
   void setRenderer(GLRender *renderer) {
     this->renderer = renderer;
+  }
+  
+  void startProgressiveRender(std::function<void()> oneSampleCallback, Image* img) {
+    renderOneSampleCallback = oneSampleCallback;
+    currentImage = img;
+    isRendering = true;
+  }
+  
+  void stopProgressiveRender() {
+    isRendering = false;
+    currentImage = nullptr;
+  }
+  
+  bool isProgressiveRendering() const {
+    return isRendering;
+  }
+  
+  int getCurrentSample() const {
+    return currentImage ? currentImage->getCurrentSample() : 0;
+  }
+  
+  // Override base class methods for progress display
+  virtual bool getIsRendering() const override {
+    return isProgressiveRendering();
+  }
+  
+  virtual int getCurrentRenderSample() const override {
+    return getCurrentSample();
   }
 
   void loadImageToPixels(Image* image) {

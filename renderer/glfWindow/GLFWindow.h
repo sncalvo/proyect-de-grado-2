@@ -69,6 +69,10 @@ namespace MCRenderer {
     virtual void render() 
     { /* empty - to be subclassed by user */ }
 
+    /*! get rendering progress info for UI display */
+    virtual bool getIsRendering() const { return false; }
+    virtual int getCurrentRenderSample() const { return 0; }
+
     void setupEvents();
 
     /*! opens the actual window, and runs the window's events to

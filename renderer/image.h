@@ -2,11 +2,11 @@
 
 #define H_IMAGE
 
-#include <nanovdb/util/CudaDeviceBuffer.h>
+#include "buffer_interface.h"
 
 #include <fstream>
 
-using BufferT = nanovdb::CudaDeviceBuffer;
+// BufferT is now defined in buffer_interface.h
 
 class Image
 {

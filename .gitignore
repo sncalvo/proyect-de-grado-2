@@ -3,6 +3,7 @@
 *#
 bin
 build
+build-xcode
 *.autosave
 *.gz
 *.zip
@@ -10,3 +11,4 @@ Session.vim
 *.swp
 vcpkg_installed/
 build/
+build-xcode/

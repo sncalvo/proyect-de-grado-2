@@ -3,11 +3,41 @@
     "configurePresets": [
         {
             "name": "default",
+            "displayName": "Windows (CUDA)",
+            "description": "Windows build with CUDA support",
             "binaryDir": "${sourceDir}/build",
             "generator": "Visual Studio 17 2022",
             "architecture": "x64",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "USE_CUDA": "ON"
+            }
+        },
+        {
+            "name": "macos-xcode",
+            "displayName": "macOS (Xcode, CPU)",
+            "description": "macOS build with Xcode generator (CPU mode)",
+            "binaryDir": "${sourceDir}/build-xcode",
+            "generator": "Xcode",
+            "cacheVariables": {
+                "USE_CUDA": "OFF",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "/usr/bin/clang",
+                "CMAKE_CXX_COMPILER": "/usr/bin/clang++",
+                "CMAKE_XCODE_GENERATE_SCHEME": "ON"
+            }
+        },
+        {
+            "name": "macos-ninja",
+            "displayName": "macOS (Ninja, CPU)",
+            "description": "macOS build with Ninja generator (CPU mode)",
+            "binaryDir": "${sourceDir}/build",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "USE_CUDA": "OFF",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15"
             }
         }
     ]

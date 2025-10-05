@@ -34,7 +34,7 @@ void version(const char* progName, int exitStatus = EXIT_SUCCESS)
 #endif
 
 #ifdef USE_CUDA
-void runNano(nanovdb::GridHandle<BufferT>* handle, Image* image) {
+void runNano(nanovdb::GridHandle<BufferT>* handle, Image* image, MCRenderer::SampleWindow* window) {
     auto lightPos = Settings::getInstance().lightLocation;
     std::cout << "Begin render with light" << lightPos[0] << "," << lightPos[1] << "," << lightPos[2] << std::endl;
     image->clear();
@@ -42,9 +42,14 @@ void runNano(nanovdb::GridHandle<BufferT>* handle, Image* image) {
     runNanoVDB(*handle, *image);
     image->save("raytrace_level_set-nanovdb-cuda.pfm");
     std::cout << "End render (CUDA)" << std::endl;
+    
+    // Load rendered image to window
+    if (window) {
+        window->loadImageToPixels(image);
+    }
 }
 #else
-void runNano(openvdb::FloatGrid::Ptr* grid, Image* image) {
+void runNano(openvdb::FloatGrid::Ptr* grid, Image* image, MCRenderer::SampleWindow* window) {
     auto lightPos = Settings::getInstance().lightLocation;
     std::cout << "Begin render with light" << lightPos[0] << "," << lightPos[1] << "," << lightPos[2] << std::endl;
     image->clear();
@@ -52,6 +57,11 @@ void runNano(openvdb::FloatGrid::Ptr* grid, Image* image) {
     runCPU(*grid, *image);
     image->save("raytrace_level_set-cpu.pfm");
     std::cout << "End render (CPU)" << std::endl;
+    
+    // Load rendered image to window
+    if (window) {
+        window->loadImageToPixels(image);
+    }
 }
 #endif
 
@@ -135,9 +145,9 @@ int main(int ac, char** av)
         window.setRenderer(&render);
 
 #ifdef USE_CUDA
-        std::function<void()> lambda = std::bind(runNano, &handle, &image);
+        std::function<void()> lambda = std::bind(runNano, &handle, &image, &window);
 #else
-        std::function<void()> lambda = std::bind(runNano, &grid, &image);
+        std::function<void()> lambda = std::bind(runNano, &grid, &image, &window);
 #endif
 
         window.run(lambda);

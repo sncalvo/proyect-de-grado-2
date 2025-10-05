@@ -14,6 +14,7 @@
 #include <glad/glad.h>
 
 #include "GLRender.h"
+#include "image.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -56,6 +57,14 @@ public:
     setupEvents();
   }
 
+  ~SampleWindow() {
+    // Clean up texture display resources
+    if (quadVAO) glDeleteVertexArrays(1, &quadVAO);
+    if (quadVBO) glDeleteBuffers(1, &quadVBO);
+    if (textureShader) glDeleteProgram(textureShader);
+    if (fbTexture) glDeleteTextures(1, &fbTexture);
+  }
+
   virtual void render() override {
     // Update camera transformation matrices
     updateCamera();
@@ -67,27 +76,47 @@ public:
   }
 
   virtual void draw() override {
-    if (fbTexture == 0) {
-      glGenTextures(1, &fbTexture);
-    }
-
-    glBindTexture(GL_TEXTURE_2D, fbTexture);
-    GLenum texFormat = GL_RGBA;
-    GLenum texelType = GL_UNSIGNED_BYTE;
-    glTexImage2D(GL_TEXTURE_2D, 0, texFormat, fbSize.x, fbSize.y, 0, GL_RGBA,
-                 texelType, pixels.data());
-
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, fbTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_DEPTH_TEST);
-
     glViewport(0, 0, fbSize.x, fbSize.y);
+    
+    // If we have pixel data, draw it as a texture
+    if (!pixels.empty()) {
+      // Initialize texture display resources on first use
+      if (!textureShader) {
+        initTextureDisplay();
+      }
 
-    renderer->draw();
+      // Upload texture data
+      if (fbTexture == 0) {
+        glGenTextures(1, &fbTexture);
+      }
+
+      glBindTexture(GL_TEXTURE_2D, fbTexture);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fbSize.x, fbSize.y, 0, GL_RGBA,
+                   GL_UNSIGNED_BYTE, pixels.data());
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+      // Draw the texture as a fullscreen quad
+      glDisable(GL_DEPTH_TEST);
+      glUseProgram(textureShader);
+      
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, fbTexture);
+      glUniform1i(glGetUniformLocation(textureShader, "textureSampler"), 0);
+      
+      glBindVertexArray(quadVAO);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+      glBindVertexArray(0);
+      
+      glUseProgram(0);
+      glBindTexture(GL_TEXTURE_2D, 0);
+    } else {
+      // If no image yet, show the 3D wireframe
+      glEnable(GL_DEPTH_TEST);
+      if (renderer) {
+        renderer->draw();
+      }
+    }
   }
 
   virtual void resize(const vec2i &newSize) {
@@ -105,9 +134,129 @@ public:
     this->renderer = renderer;
   }
 
+  void loadImageToPixels(Image* image) {
+    if (!image) return;
+    
+    // Get the image data (download from device if necessary)
+    float* imageData = image->deviceDownload();
+    if (!imageData) return;
+    
+    int width = image->width();
+    int height = image->height();
+    
+    // Resize pixel buffer if needed
+    if (fbSize.x != width || fbSize.y != height) {
+      fbSize.x = width;
+      fbSize.y = height;
+      pixels.resize(width * height);
+    }
+    
+    // Convert float RGB to uint32_t RGBA
+    // Image is stored as RGB floats (0-1 range), we need RGBA bytes
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        int idx = y * width + x;
+        int imgIdx = idx * 3;
+        
+        // Clamp and convert float [0,1] to byte [0,255]
+        uint8_t r = static_cast<uint8_t>(std::min(1.0f, std::max(0.0f, imageData[imgIdx + 0])) * 255.0f);
+        uint8_t g = static_cast<uint8_t>(std::min(1.0f, std::max(0.0f, imageData[imgIdx + 1])) * 255.0f);
+        uint8_t b = static_cast<uint8_t>(std::min(1.0f, std::max(0.0f, imageData[imgIdx + 2])) * 255.0f);
+        uint8_t a = 255; // Full opacity
+        
+        // Pack RGBA into uint32_t (ABGR format for OpenGL)
+        pixels[idx] = (a << 24) | (b << 16) | (g << 8) | r;
+      }
+    }
+  }
+
 private:
   GLRender *renderer;
   const Camera &camera;
+  
+  // Resources for displaying the rendered image texture
+  GLuint quadVAO = 0;
+  GLuint quadVBO = 0;
+  GLuint textureShader = 0;
+
+  void initTextureDisplay() {
+    // Simple vertex shader for fullscreen quad
+    const char* vertexShaderSource = R"(
+      #version 330 core
+      layout (location = 0) in vec2 aPos;
+      layout (location = 1) in vec2 aTexCoord;
+      
+      out vec2 TexCoord;
+      
+      void main()
+      {
+          gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);
+          TexCoord = aTexCoord;
+      }
+    )";
+
+    // Simple fragment shader for textured quad
+    const char* fragmentShaderSource = R"(
+      #version 330 core
+      out vec4 FragColor;
+      
+      in vec2 TexCoord;
+      
+      uniform sampler2D textureSampler;
+      
+      void main()
+      {
+          FragColor = texture(textureSampler, TexCoord);
+      }
+    )";
+
+    // Compile shaders
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+
+    // Create shader program
+    textureShader = glCreateProgram();
+    glAttachShader(textureShader, vertexShader);
+    glAttachShader(textureShader, fragmentShader);
+    glLinkProgram(textureShader);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    // Create fullscreen quad (two triangles)
+    float quadVertices[] = {
+      // positions   // texCoords
+      -1.0f,  1.0f,  0.0f, 1.0f,
+      -1.0f, -1.0f,  0.0f, 0.0f,
+       1.0f, -1.0f,  1.0f, 0.0f,
+
+      -1.0f,  1.0f,  0.0f, 1.0f,
+       1.0f, -1.0f,  1.0f, 0.0f,
+       1.0f,  1.0f,  1.0f, 1.0f
+    };
+
+    glGenVertexArrays(1, &quadVAO);
+    glGenBuffers(1, &quadVBO);
+    
+    glBindVertexArray(quadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+    
+    // Position attribute
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    
+    // Texture coord attribute
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    
+    glBindVertexArray(0);
+  }
 
   void updateCamera() {
     if (!renderer) return;

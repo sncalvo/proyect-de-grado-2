@@ -28,24 +28,33 @@ set(COMMON_SOURCES
   settings.h
 )
 
+# Shared headers used by both CPU and GPU
+set(SHARED_HEADERS
+  integrator_common.h
+  platform_macros.h
+  random_interface.h
+)
+
 # Conditional sources based on CUDA availability
 if(USE_CUDA)
   set(RENDERER_SOURCES
     ${COMMON_SOURCES}
+    ${SHARED_HEADERS}
     nanovdb.cu
     ComputePrimitives.cuh
     common.cuh
     integrator.cuh
+    integrator_gpu_adapter.h
     ray.cuh
   )
 else()
   set(RENDERER_SOURCES
     ${COMMON_SOURCES}
+    ${SHARED_HEADERS}
     cpu_renderer.cpp
+    integrator_cpu_adapter.h
     buffer_interface.h
-    random_interface.h
     compute_interface.h
-    platform_macros.h
   )
 endif()
 

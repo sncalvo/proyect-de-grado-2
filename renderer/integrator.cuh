@@ -3,7 +3,6 @@
 
 #include <chrono>
 #include <nanovdb/util/CudaDeviceBuffer.h>
-#include <nanovdb/util/CudaDeviceBuffer.h>
 #include <nanovdb/util/GridHandle.h>
 #include <nanovdb/util/GridStats.h>
 #include <nanovdb/util/Ray.h>
@@ -11,6 +10,7 @@
 
 #include "ray.cuh"
 #include "common.cuh"
+#include "weightHeuristics.cuh"
 #include "settings.h"
 
 #include <curand.h>
@@ -32,7 +32,6 @@ constexpr float MIN_STEP = 0.5f;
 constexpr float MAX_STEP = 5.f;
 constexpr float PI = 3.14159265358979323846f;
 constexpr float DENSITY = 0.1f;
-constexpr unsigned int PIXEL_SAMPLES = 8;
 
 Vec3T UP = Vec3T {0.0f, 1.0f, 0.0f};
 
@@ -72,7 +71,7 @@ struct World {
   float maxSigma;
 };
 
-void __device__ runRender(curandState* state, int width, int height, int start, int end, float* image, const World world, Vec3T lightPosition);
+void __device__ runRender(curandState* state, int width, int height, int start, int end, float* image, const World world, Vec3T lightPosition, unsigned int pixelSamples);
 float getDuration(std::chrono::steady_clock::time_point t0, std::chrono::steady_clock::time_point t1) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.f;
 }
@@ -104,12 +103,12 @@ public:
         auto t0 = ClockT::now();
 
         auto vectorLightPosition = Vec3T(lightPosition[0], lightPosition[1], lightPosition[2]);
-
-        printf("Light position: (%.4f, %.4f, %.4f)\n", vectorLightPosition[0], vectorLightPosition[1], vectorLightPosition[2]);
+        auto pixelSamples = Settings::getInstance().pixelSamples;
+        printf("Light position: (%.4f, %.4f, %.4f)\npixel samples: %d\n", vectorLightPosition[0], vectorLightPosition[1], vectorLightPosition[2], pixelSamples);
 
         computeForEach(
-            m_useCuda, width * height, 128, __FILE__, __LINE__, [width, height, image, world, vectorLightPosition] __device__ (int start, int end, curandState * dStates) {
-              runRender(dStates, width, height, start, end, image, world, vectorLightPosition);
+            m_useCuda, width * height, 128, __FILE__, __LINE__, [width, height, image, world, vectorLightPosition, pixelSamples] __device__ (int start, int end, curandState * dStates) {
+              runRender(dStates, width, height, start, end, image, world, vectorLightPosition, pixelSamples);
             });
         computeSync(m_useCuda, __FILE__, __LINE__);
 
@@ -134,7 +133,7 @@ float __device__ clamp(float min, float max, float value) {
 
 Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayEye, float* image, int width, int height, curandState* localState, float sigmaMAJ, nanovdb::DefaultReadAccessor<float>& acc, Vec3T lightPosition);
 
-void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const World world, Vec3T lightPosition) {
+void __device__ runRender(curandState* dStates, int width, int height, int start, int end, float* image, const World world, Vec3T lightPosition, unsigned int pixelSamples) {
     auto acc = world.grid->tree().getAccessor();
     auto id = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -146,11 +145,11 @@ void __device__ runRender(curandState* dStates, int width, int height, int start
 
     for (int i = start; i < end; ++i) {
         Vec4T totalColor;
-        for (int j = 0; j < PIXEL_SAMPLES; ++j) {
+        for (int j = 0; j < pixelSamples; ++j) {
             Vec4T color = DeltaTrackingIntegration(i, world, rayEye, image, width, height, localState, sigmaMAJ, acc, lightPosition);
             totalColor += color;
         }
-        totalColor /= PIXEL_SAMPLES;
+        totalColor /= pixelSamples;
         writeBuffer(image, i, width, height, 0.0f, 0.0f, Vec3T(totalColor[0], totalColor[1], totalColor[2]));
     }
 }
@@ -212,6 +211,8 @@ float __device__ PointToPointMarching(
         if (world.grid->tree().isActive(coord)) {
             sigma = acc.getValue(coord) * DENSITY;
         }
+
+        // float maxSigma = nanovdb::getExtrema(world.grid, hostGrid()->indexBBox());
 
         auto muA = sigma * SIGMA_A;
         auto muS = sigma * SIGMA_S;
@@ -291,6 +292,8 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
     Vec3T color{ 0.f,0.f,0.f };
     auto far = iRay.t0();
 
+    auto totalRayPDF = 1.f;
+
     for (unsigned int depth = 0; !absorbed && depth < DEPTH_LIMIT; ++depth) {
         auto coord = CoordT::Floor(iRay(far));
 
@@ -335,6 +338,10 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
         float sampleAttenuation = exp(-(pathLength)*muT);
         transmittance *= sampleAttenuation;
 
+
+        auto pdfModifier = muT * sampleAttenuation;
+        totalRayPDF *= pdfModifier;
+
         float sample = curand_uniform(localState);
 
         if (sample < nullPoint) {
@@ -377,12 +384,20 @@ Vec4T __device__ DeltaTrackingIntegration(int i, const World& world, Vec3T& rayE
             //     lightTransmittance, transmittance, greensteinPDF
             // );
 
-            // color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f) * greensteinPDF * 100.f;
-            color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
-
             float sample1 = curand_uniform(localState);
             float sample2 = curand_uniform(localState);
+            auto previousDirection = rayDir;
             rayDir = sampleHenyeyGreenstein(g, rayDir, sample1, sample2);
+            cosTheta = dot(rayDir, previousDirection);
+
+            float newPDF = henyey_greenstein(g, cosTheta);
+            auto sectionPDF = balanceHeuristic(
+                newPDF, 1,
+                greensteinPDF,
+                1);
+            // color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f) * greensteinPDF * 100.f;
+           // color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f) * sectionPDF;
+            color += lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
 
             Vec3T iRayOrigin = iRay(far);
 

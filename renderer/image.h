@@ -87,7 +87,11 @@ public:
 
     void clear()
     {
+        m_buffer.clear();
         m_buffer.init(m_width * m_height * 3 * sizeof(float), true);
+
+        m_uploadPtr = nullptr;
+        m_downloadPtr = nullptr;
     }
 
     int width() const { return m_width; }

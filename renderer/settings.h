@@ -15,6 +15,7 @@ public:
     float cameraLocation[3];
     float lightLocation[3];
     float lightColor[3];
+    unsigned int pixelSamples;
 
 private:
     // Private constructor for singleton
@@ -31,5 +32,7 @@ private:
         lightColor[0] = 1.0f;  // R
         lightColor[1] = 1.0f;  // G
         lightColor[2] = 1.0f;  // B (White light)
+
+        pixelSamples = 4;  // Default pixel samples
     }
 }; 

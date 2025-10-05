@@ -167,6 +167,9 @@ void GLFWindow::run(std::function<void()>& lambda) {
     ImGui::InputFloat3("CameraLocation", Settings::getInstance().cameraLocation, "%.2f");
     ImGui::EndChild();
 
+    ImGui::Text("Pixel Samples");
+    ImGui::InputScalar("PixelSamples", ImGuiDataType_U32, &Settings::getInstance().pixelSamples);
+
     if (ImGui::Button("Render")) {
       // render
         lambda();

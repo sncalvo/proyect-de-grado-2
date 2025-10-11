@@ -193,6 +193,15 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
     float far = world.getRayT0(iRay);
 
     for (unsigned int depth = 0; !absorbed && depth < DEPTH_LIMIT; ++depth) {
+        // Sample path length using the majorant (unbiased)
+        // FIXED: Removed the clamp() which introduces bias.
+        float pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
+
+        far += pathLength;
+        if (far > world.getRayT1(iRay)) {
+            break; // Ray exited the volume
+        }
+
         Vec3T currentPos = iRay(far);
         CoordT coord = world.floorCoord(currentPos);
 

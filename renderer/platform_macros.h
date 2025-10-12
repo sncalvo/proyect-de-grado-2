@@ -10,15 +10,15 @@
     // CPU build - define CUDA decorators as inline or empty
     
     #ifndef __device__
-        #define __device__ inline
+        #define __device__
     #endif
     
     #ifndef __host__
-        #define __host__ inline
+        #define __host__
     #endif
     
     #ifndef __hostdev__
-        #define __hostdev__ inline
+        #define __hostdev__
     #endif
     
     #ifndef __global__

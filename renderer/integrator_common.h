@@ -9,14 +9,15 @@
 #include "platform_macros.h"
 #include "random_interface.h"
 
-// Common constants for both CPU and GPU
-constexpr unsigned int DEPTH_LIMIT = 100;
+// We can use a much larger depth limit, as RR will handle termination efficiently.
+constexpr unsigned int MAX_DEPTH_SAFETY_NET = 128;
+constexpr unsigned int MIN_BOUNCES_FOR_RR = 5; // Start Russian Roulette after this many bounces.
 constexpr float SIGMA_A = 0.05f;
 constexpr float SIGMA_S = 0.95f;
 constexpr float MIN_STEP = 0.5f;
 constexpr float MAX_STEP = 5.f;
 constexpr float PI = 3.14159265358979323846f;
-constexpr float DENSITY = 0.1f;
+constexpr float DENSITY = 0.5f;
 
 // Common utility functions
 template<typename T>
@@ -160,46 +161,41 @@ inline __hostdev__ float PointToPointMarching(
     return transmittance;
 }
 
-// Delta tracking integration - main rendering algorithm
-// This is the core algorithm that works for both CPU and GPU
+
 template<typename WorldT, typename Vec3T, typename Vec4T, typename RayT, typename AccessorT, typename CoordT>
 inline __hostdev__ Vec4T DeltaTrackingIntegration(
-    int i, 
-    const WorldT& world, 
-    const Vec3T& rayEye, 
-    float* image, 
-    int width, 
-    int height, 
-    RandomState* localState, 
-    float sigmaMAJ, 
-    AccessorT& acc, 
+    int i,
+    const WorldT& world,
+    const Vec3T& rayEye,
+    float* image,
+    int width,
+    int height,
+    RandomState* localState,
+    float sigmaMAJ,
+    AccessorT& acc,
     const Vec3T& lightPosition
 ) {
     Vec3T rayDir = world.getRayDirection(i);
-
     RayT wRay(rayEye, rayDir);
     RayT iRay = world.worldToIndexRay(wRay);
-
     Vec3T backgroundColor(0.36f, 0.702f, 0.98f);
 
-    // Clip ray to bounding box
     if (!world.clipRay(iRay)) {
         return Vec4T(backgroundColor[0], backgroundColor[1], backgroundColor[2], 1.0f);
     }
 
-    float transmittance = 1.0f;
-    bool absorbed = false;
     Vec3T color(0.f, 0.f, 0.f);
+    Vec3T pathThroughput(1.f, 1.f, 1.f);
+    bool absorbed = false;
     float far = world.getRayT0(iRay);
 
-    for (unsigned int depth = 0; !absorbed && depth < DEPTH_LIMIT; ++depth) {
-        // Sample path length using the majorant (unbiased)
-        // FIXED: Removed the clamp() which introduces bias.
+    // The depth limit is now just a safety net against infinite loops.
+    for (unsigned int depth = 0; !absorbed && depth < MAX_DEPTH_SAFETY_NET; ++depth) {
         float pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
-
         far += pathLength;
+
         if (far > world.getRayT1(iRay)) {
-            break; // Ray exited the volume
+            break;
         }
 
         Vec3T currentPos = iRay(far);
@@ -210,92 +206,75 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
             sigma = acc.getValue(coord) * DENSITY;
         }
 
+        if (sigma <= 0.f) continue;
+
         float muA = sigma * SIGMA_A;
         float muS = sigma * SIGMA_S;
         float muT = muA + muS;
 
-        float pathLength;
-        if (sigma > 0.f) {
-            pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
-        }
-        else {
-            pathLength = MIN_STEP * 10.f;
-        }
+        float realCollisionProb = muT / sigmaMAJ;
+        if (curand_uniform(localState) >= realCollisionProb) continue;
 
-        float destFar = far;
-        far += pathLength;
-        if (far > world.getRayT1(iRay))
-            break;
+        // --- A real collision has occurred ---
+        float albedo = (muT > 0.f) ? (muS / muT) : 0.f;
+        const float g = 0.2f;
 
-        if (sigma <= 0.f) {
-            continue;
-        }
+        // 4. Next-Event Estimation (Direct Lighting)
+        {
+            Vec3T scatterPosWorld = wRay(far);
+            Vec3T lightDir = lightPosition - scatterPosWorld;
+            float lightDistSq = lightDir.lengthSqr();
+            lightDir.normalize();
 
-        float absorbtion = muA / sigmaMAJ;
-        float scattering = muS / sigmaMAJ;
-        float nullPoint = 1.f - absorbtion - scattering;
+            const float pdf_light = 1.0f;
+            float pdf_phase = henyey_greenstein(g, dot(rayDir, lightDir));
+            float mis_weight = balanceHeuristic(pdf_light, 1, pdf_phase, 1);
 
-        float sampleAttenuation = expf(-(pathLength)*muT);
-        transmittance *= sampleAttenuation;
-
-        float sample = curand_uniform(localState);
-
-        if (sample < nullPoint) {
-            continue;
-        }
-        else if (sample < nullPoint + absorbtion) {
-            color += Vec3T(0.0f, 0.0f, 0.0f);
-            absorbed = true;
-        }
-        else {
-            // Sample direct light
-            float g = 0.2f;
-            if (world.isActive(coord)) {
-                g = acc.getValue(coord);
-            }
-
-            Vec3T positionInCloud = wRay(far);
-            
             float lightTransmittance = PointToPointMarching<WorldT, Vec3T, RayT, AccessorT, CoordT>(
-                world, positionInCloud, lightPosition, localState, sigmaMAJ, acc, destFar, iRay);
-            float cosTheta = dot(rayDir, lightPosition - positionInCloud);
-            float greensteinPDF = henyey_greenstein(g, cosTheta);
+                world, scatterPosWorld, lightPosition, localState, sigmaMAJ, acc, far, iRay);
 
-            // Check if greensteinPDF is NaN and replace with 0 if it is
-            if (isnan(greensteinPDF)) {
-                greensteinPDF = 0.0f;
+            if (lightTransmittance > 0.0f) {
+                Vec3T lightIntensity = Vec3T(1.f, 1.f, 1.f) * 40000.f;
+                Vec3T L_i = lightIntensity / lightDistSq;
+                float phaseVal = henyey_greenstein(g, dot(rayDir, lightDir));
+                color += pathThroughput * L_i * lightTransmittance * phaseVal * mis_weight;
             }
+        }
 
+        // 5. Path Continuation - CORRECTED LOGIC
+        
+        // ✨ Step 1: Apply physical attenuation. The path ALWAYS gets dimmer.
+        pathThroughput *= albedo;
+
+        // ✨ Step 2: Apply Russian Roulette for efficiency.
+        if (depth >= MIN_BOUNCES_FOR_RR) {
+            float survivalProb = fmaxf(pathThroughput[0], fmaxf(pathThroughput[1], pathThroughput[2]));
+            if (curand_uniform(localState) > survivalProb) {
+                absorbed = true; // Terminate the path
+            } else {
+                // Compensate the energy of the surviving path
+                pathThroughput *= (1.0f / survivalProb);
+            }
+        }
+        
+        // If the path was not terminated, scatter it.
+        if (!absorbed) {
             float sample1 = curand_uniform(localState);
             float sample2 = curand_uniform(localState);
-            Vec3T previousDirection = rayDir;
             rayDir = sampleHenyeyGreenstein(g, rayDir, sample1, sample2);
-            cosTheta = dot(rayDir, previousDirection);
 
-            float newPDF = henyey_greenstein(g, cosTheta);
-            float sectionPDF = balanceHeuristic(newPDF, 1, greensteinPDF, 1);
-
-            float albedo = (muT > 0.f) ? (muS / muT) : 0.f;
-            color += albedo * lightTransmittance * transmittance * Vec3T(1.f, 1.f, 1.f);
-
-            // Create new ray in scattered direction
-            Vec3T newIRayOrigin = iRay(far);
-            iRay = world.createIndexRay(newIRayOrigin, rayDir, wRay.eye());
-
-            // Clip new ray to bounding box
+            iRay = world.createIndexRay(iRay(far), rayDir, wRay.eye());
             if (!world.clipRay(iRay)) {
                 absorbed = true;
-                break;
             }
             far = world.getRayT0(iRay);
         }
     }
 
     if (!absorbed) {
-        color += backgroundColor * transmittance;
+        color += pathThroughput * backgroundColor;
     }
 
-    return Vec4T(color[0], color[1], color[2], 1.f - transmittance);
+    return Vec4T(color[0], color[1], color[2], 1.0f);
 }
-
 #endif // H_INTEGRATOR_COMMON

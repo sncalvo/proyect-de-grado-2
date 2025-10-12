@@ -37,7 +37,7 @@ void runRenderOneSample(
 ) {
     auto acc = world.grid->getAccessor();
     Vec3T rayEye = world.camera.origin();
-    float sigmaMAJ = world.maxSigma * (SIGMA_A + SIGMA_S);
+    float sigmaMAJ = world.maxSigma * DENSITY * (SIGMA_A + SIGMA_S);
 
     for (int i = start; i < end; ++i) {
         // Render one sample for this pixel

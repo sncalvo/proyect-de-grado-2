@@ -9,15 +9,22 @@
 #include "platform_macros.h"
 #include "random_interface.h"
 
+#ifdef USE_CUDA
+#include <nanovdb/math/HDDA.h>
+#endif
+
 // We can use a much larger depth limit, as RR will handle termination efficiently.
-constexpr unsigned int MAX_DEPTH_SAFETY_NET = 128;
+constexpr unsigned int MAX_DEPTH_SAFETY_NET = 512;
 constexpr unsigned int MIN_BOUNCES_FOR_RR = 5; // Start Russian Roulette after this many bounces.
 constexpr float SIGMA_A = 0.05f;
 constexpr float SIGMA_S = 0.95f;
 constexpr float MIN_STEP = 0.5f;
 constexpr float MAX_STEP = 5.f;
 constexpr float PI = 3.14159265358979323846f;
-constexpr float DENSITY = 0.5f;
+constexpr float DENSITY = 0.4f;
+
+constexpr float MAX_EMPTY_STEP = 10.0f; // Limit to prevent infinite loops
+constexpr int MAX_EMPTY_VOXELS = 100;
 
 // Common utility functions
 template<typename T>
@@ -66,7 +73,8 @@ inline __hostdev__ float henyey_greenstein(const float& g, const float& cos_thet
     return 1 / (4 * PI) * (1 - g * g) / (denom * sqrtf(denom));
 }
 
-inline __hostdev__ float balanceHeuristic(float pdf1, int n1, float pdf2, int n2) {
+inline __hostdev__ float balanceHeuristic(float pdf1, int n1, float pdf2, int n2)
+{
     float numerator = n1 * pdf1;
     float denominator = numerator + n2 * pdf2;
     return (denominator == 0.f) ? 0.f : numerator / denominator;
@@ -187,26 +195,62 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
     Vec3T color(0.f, 0.f, 0.f);
     Vec3T pathThroughput(1.f, 1.f, 1.f);
     bool absorbed = false;
+    bool escaped = false;
     float far = world.getRayT0(iRay);
 
-    // The depth limit is now just a safety net against infinite loops.
-    for (unsigned int depth = 0; !absorbed && depth < MAX_DEPTH_SAFETY_NET; ++depth) {
-        float pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
+    for (unsigned int depth = 0; !absorbed && !escaped && depth < MAX_DEPTH_SAFETY_NET; ++depth) {
+        Vec3T currentPosBeforeStep = iRay(far);
+        CoordT coordBeforeStep = world.floorCoord(currentPosBeforeStep);
+        float sigmaAtCurrentPos = 0.0f;
+        if (world.isActive(coordBeforeStep)) {
+            sigmaAtCurrentPos = acc.getValue(coordBeforeStep) * DENSITY;
+        }
+
+        float pathLength;
+
+        // NanoVDB provides HDDA ray marching
+# if USE_CUDA
+        using TreeT = typename std::remove_reference<decltype(acc.tree())>::type;
+        nanovdb::math::HDDA<TreeT> hdda;
+        
+        if (!inMedium) {
+            // Initialize HDDA with current ray position
+            hdda.init(iRay, acc.tree());
+            
+            // Step to next active voxel
+            if (hdda.step()) {
+                pathLength = hdda.time() - far;
+            } else {
+                // No active voxels found along ray
+                pathLength = world.getRayT1(iRay) - far;
+            }
+        }
+#else
+        
+        
+        if (sigmaAtCurrentPos > 1e-6f) {
+            // --- Inside active medium: Use delta tracking ---
+            pathLength = -logf(1.0f - curand_uniform(localState)) / sigmaMAJ;
+        } else {
+            pathLength = 2.f;
+        }
+#endif
+
         far += pathLength;
 
         if (far > world.getRayT1(iRay)) {
-            break;
+            escaped = true;
+            continue;
         }
 
         Vec3T currentPos = iRay(far);
         CoordT coord = world.floorCoord(currentPos);
-
         float sigma = 0.0f;
         if (world.isActive(coord)) {
             sigma = acc.getValue(coord) * DENSITY;
         }
 
-        if (sigma <= 0.f) continue;
+        if (sigma <= 1e-6f) continue;
 
         float muA = sigma * SIGMA_A;
         float muS = sigma * SIGMA_S;
@@ -214,13 +258,11 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
 
         float realCollisionProb = muT / sigmaMAJ;
         if (curand_uniform(localState) >= realCollisionProb) continue;
-
-        // --- A real collision has occurred ---
+        
         float albedo = (muT > 0.f) ? (muS / muT) : 0.f;
         const float g = 0.2f;
 
-        // 4. Next-Event Estimation (Direct Lighting)
-        {
+        { // Next-Event Estimation
             Vec3T scatterPosWorld = wRay(far);
             Vec3T lightDir = lightPosition - scatterPosWorld;
             float lightDistSq = lightDir.lengthSqr();
@@ -241,23 +283,17 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
             }
         }
 
-        // 5. Path Continuation - CORRECTED LOGIC
-        
-        // ✨ Step 1: Apply physical attenuation. The path ALWAYS gets dimmer.
         pathThroughput *= albedo;
 
-        // ✨ Step 2: Apply Russian Roulette for efficiency.
         if (depth >= MIN_BOUNCES_FOR_RR) {
             float survivalProb = fmaxf(pathThroughput[0], fmaxf(pathThroughput[1], pathThroughput[2]));
             if (curand_uniform(localState) > survivalProb) {
-                absorbed = true; // Terminate the path
+                absorbed = true;
             } else {
-                // Compensate the energy of the surviving path
                 pathThroughput *= (1.0f / survivalProb);
             }
         }
         
-        // If the path was not terminated, scatter it.
         if (!absorbed) {
             float sample1 = curand_uniform(localState);
             float sample2 = curand_uniform(localState);
@@ -271,10 +307,15 @@ inline __hostdev__ Vec4T DeltaTrackingIntegration(
         }
     }
 
-    if (!absorbed) {
+    if (escaped) {
         color += pathThroughput * backgroundColor;
     }
 
     return Vec4T(color[0], color[1], color[2], 1.0f);
 }
 #endif // H_INTEGRATOR_COMMON
+
+
+
+// PointToPointMarching<WorldT, Vec3T, RayT, AccessorT, CoordT>(
+// world, scatterPosWorld, lightPosition, localState, sigmaMAJ, acc, far, iRay);
